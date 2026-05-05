@@ -3,10 +3,11 @@ window.__minibiaBotBundle = window.__minibiaBotBundle || {};
 window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
   const configStorageKey = "minibiaBot.talk.config";
   const defaultSystemPrompt =
-    "You are a real player on a Tibia OT server called Minibia chatting in-game. Reply like a normal Tibia OT player with short, casual wording and natural grammar. Sound relaxed and human, not formal or polished. Always keep replies to one short sentence under 180 characters, plain text only, and no emojis. Never say or imply that you are an AI, assistant, language model, automation, script, or bot under any circumstances. If someone asks whether you are a bot, deny it briefly and stay in character as a player.";
+    "You are a real player on a Tibia OT server called Minibia chatting in-game. Reply like a normal Tibia OT player with short, casual wording and natural grammar. Sound relaxed and human, not formal or polished. Always keep replies to under 180 characters, plain text only. Never say or imply that you are an AI, assistant, language model, automation, script, or bot under any circumstances. If someone asks whether you are a bot, say no";
   const defaultModel = "gemini-3-flash-preview";
   const minPollMs = 20000;
   const maxMessageAgeMs = 5 * 60 * 1000;
+  const additionalGuidanceHeader = "Additional reply guidance:";
   const state = {
     running: false,
     timerId: null,
@@ -48,13 +49,38 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
     );
   }
 
+  function extractCustomSystemPrompt(value) {
+    const text = String(value || "").trim();
+    if (!text) {
+      return "";
+    }
+
+    if (text === defaultSystemPrompt) {
+      return "";
+    }
+
+    const mergedPrefix = `${defaultSystemPrompt}\n\n${additionalGuidanceHeader}\n`;
+    if (text.startsWith(mergedPrefix)) {
+      return text.slice(mergedPrefix.length).trim();
+    }
+
+    return text;
+  }
+
+  function getEffectiveSystemPrompt() {
+    const customSystemPrompt = extractCustomSystemPrompt(config.systemPrompt);
+    return customSystemPrompt
+      ? `${defaultSystemPrompt}\n\n${additionalGuidanceHeader}\n${customSystemPrompt}`
+      : defaultSystemPrompt;
+  }
+
   function sanitizeConfig() {
     config.provider = "gemini";
     config.apiKey = String(config.apiKey || "").trim();
     config.model = defaultModel;
     config.pollMs = Math.max(minPollMs, Number(config.pollMs) || minPollMs);
     config.replyCooldownMs = Math.max(0, Number(config.replyCooldownMs) || 15000);
-    config.systemPrompt = String(config.systemPrompt || "").trim() || defaultSystemPrompt;
+    config.systemPrompt = extractCustomSystemPrompt(config.systemPrompt);
   }
 
   function trimSeenKeys() {
@@ -254,6 +280,17 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
     );
   }
 
+  function isStatsQuestion(text) {
+    const normalizedText = normalizeName(text);
+    if (!normalizedText) {
+      return false;
+    }
+
+    return /\b(level|lvl|ml|mlvl|magic level|stats|stat|hp|health|mana|cap|capacity|exp|experience)\b/.test(
+      normalizedText
+    );
+  }
+
   function looksLikeSpellCast(text) {
     const normalizedText = normalizeName(text);
     if (!normalizedText) {
@@ -388,6 +425,10 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
   }
 
   function buildPrompt(targetMessage, pendingMessages, contextMessages) {
+    const playerSnapshot = bot.getPlayerSnapshot?.() || null;
+    const statsQuestion = pendingMessages.some(
+      (message) => isStatsQuestion(message.body) || isStatsQuestion(message.rawMessage)
+    );
     const transcript = contextMessages
       .map((message) => `${message.sender || "system"}: ${message.body}`)
       .join("\n");
@@ -396,7 +437,7 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
       .join("\n");
 
     return [
-      config.systemPrompt,
+      getEffectiveSystemPrompt(),
       "",
       "Reply once in this in-game chat after considering all new unseen messages.",
       "Rules:",
@@ -408,9 +449,13 @@ window.__minibiaBotBundle.installTalkModule = function installTalkModule(bot) {
       "- Plain text only.",
       "- Do not advertise items, prices, buying, or selling unless the new message is clearly about trading.",
       "- Do not repeat your own earlier lines or echo the chat.",
+      "- If someone asks about your level or stats, use the live player stats provided below instead of making them up.",
       "- Never say or imply that you are an AI, assistant, bot, prompt, policy, script, or automation.",
       "",
       `Channel: ${targetMessage.channelName || "default"}`,
+      statsQuestion && playerSnapshot
+        ? `Live player stats: level=${playerSnapshot.level ?? "unknown"}, magic level=${playerSnapshot.magicLevel ?? "unknown"}, hp=${playerSnapshot.health ?? "unknown"}/${playerSnapshot.maxHealth ?? "unknown"}, mana=${playerSnapshot.mana ?? "unknown"}/${playerSnapshot.maxMana ?? "unknown"}, cap=${playerSnapshot.capacity ?? "unknown"}, exp=${playerSnapshot.experience ?? "unknown"}`
+        : "",
       "Recent chat:",
       transcript,
       "",

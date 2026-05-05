@@ -136,6 +136,33 @@ window.__minibiaBotBundle.createBot = function createBot() {
       .replace(/\s+/g, " ");
   }
 
+  function getSkillWindowValue(skillNames = []) {
+    for (const skillName of skillNames) {
+      const value =
+        document.querySelector(`#skill-window div[skill="${skillName}"] .skill`)?.textContent?.trim() ||
+        null;
+      if (value) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  function parseNumberText(value) {
+    if (value == null) {
+      return null;
+    }
+
+    const normalized = String(value).replace(/[^\d.-]/g, "");
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function isVisibleElement(element) {
     if (!(element instanceof Element)) {
       return false;
@@ -301,6 +328,26 @@ window.__minibiaBotBundle.createBot = function createBot() {
           ""
         ).trim() || null
       );
+    },
+    getPlayerSnapshot() {
+      const playerState = this.getPlayerState() || {};
+      const levelText = getSkillWindowValue(["level"]);
+      const magicLevelText = getSkillWindowValue(["magic", "magic-level", "mlvl"]);
+      const experienceText = getSkillWindowValue(["experience", "exp"]);
+      const capacityText = getSkillWindowValue(["capacity", "cap"]);
+
+      return {
+        name: this.getPlayerName(),
+        level: parseNumberText(playerState.level) ?? parseNumberText(levelText),
+        magicLevel: parseNumberText(playerState.magicLevel ?? playerState.magic_level) ?? parseNumberText(magicLevelText),
+        health: parseNumberText(playerState.health),
+        maxHealth: parseNumberText(playerState.maxHealth),
+        mana: parseNumberText(playerState.mana),
+        maxMana: parseNumberText(playerState.maxMana),
+        experience: parseNumberText(playerState.experience ?? playerState.exp) ?? parseNumberText(experienceText),
+        capacity: parseNumberText(playerState.capacity ?? playerState.cap) ?? parseNumberText(capacityText),
+        food: getSkillWindowValue(["food"]),
+      };
     },
     sendChat(text) {
       const channelManager = window.gameClient?.interface?.channelManager;
