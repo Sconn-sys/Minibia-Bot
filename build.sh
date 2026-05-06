@@ -7,6 +7,7 @@ cat \
   src/modules/xray.js \
   src/modules/panic.js \
   src/modules/rune.js \
+  src/modules/heal.js \
   src/modules/auto-eat.js \
   src/ui/panel.js \
   src/main.js \

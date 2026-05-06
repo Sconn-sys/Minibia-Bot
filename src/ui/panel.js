@@ -155,6 +155,13 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     autoEatToggle.checked = !!bot.eat?.status?.().running;
   }
 
+  function refreshAutoHealStatus() {
+    const autoHealToggle = document.getElementById("minibia-bot-auto-heal-enabled");
+    if (!autoHealToggle) return;
+
+    autoHealToggle.checked = !!bot.heal?.status?.().running;
+  }
+
   function refreshVisibleCreatures() {
     const list = document.getElementById("minibia-bot-visible-creatures-list");
     if (!list) return;
@@ -489,6 +496,33 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
         min-width: 0;
       }
 
+      #minibia-bot-panel .mb-row-five {
+        display: grid;
+        grid-template-columns: auto 82px 72px 82px 72px;
+        align-items: center;
+        gap: 8px;
+      }
+
+      #minibia-bot-panel .mb-row-five input[type="number"] {
+        min-width: 0;
+      }
+
+      #minibia-bot-panel .mb-field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      #minibia-bot-panel .mb-field {
+        display: grid;
+        gap: 4px;
+      }
+
+      #minibia-bot-panel .mb-field-label {
+        color: #d3c49d;
+        font-size: 11px;
+      }
+
       #minibia-bot-panel .mb-stack {
         display: grid;
         gap: 8px;
@@ -572,6 +606,10 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
         #minibia-bot-panel .mb-body {
           grid-template-columns: 1fr;
         }
+
+        #minibia-bot-panel .mb-field-grid {
+          grid-template-columns: 1fr;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -645,6 +683,34 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
             <div class="mb-small-note" id="minibia-bot-xray-overlay-status">Overlay: on</div>
             <div class="mb-list" id="minibia-bot-visible-creatures-list"></div>
           </div>
+          <div class="mb-section mb-column-section">
+            <div class="mb-label">Auto Heal</div>
+            <div class="mb-stack">
+              <label class="mb-toggle">
+                <input type="checkbox" id="minibia-bot-auto-heal-enabled" />
+                <span>Enable Auto Heal</span>
+              </label>
+              <div class="mb-field-grid">
+                <label class="mb-field" for="minibia-bot-auto-heal-min-hp">
+                  <span class="mb-field-label">Minimum HP</span>
+                  <input type="number" id="minibia-bot-auto-heal-min-hp" min="0" placeholder="250" />
+                </label>
+                <label class="mb-field" for="minibia-bot-auto-heal-hp-hotkey">
+                  <span class="mb-field-label">HP Hotkey (1-12)</span>
+                  <input type="number" id="minibia-bot-auto-heal-hp-hotkey" min="1" max="12" placeholder="1" />
+                </label>
+                <label class="mb-field" for="minibia-bot-auto-heal-min-mana">
+                  <span class="mb-field-label">Minimum Mana</span>
+                  <input type="number" id="minibia-bot-auto-heal-min-mana" min="0" placeholder="150" />
+                </label>
+                <label class="mb-field" for="minibia-bot-auto-heal-mana-hotkey">
+                  <span class="mb-field-label">Mana Hotkey (1-12)</span>
+                  <input type="number" id="minibia-bot-auto-heal-mana-hotkey" min="1" max="12" placeholder="2" />
+                </label>
+              </div>
+              <div class="mb-small-note">Checks once per second. HP is used before mana if both are low.</div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -670,6 +736,11 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     const manaInput = panel.querySelector("#minibia-bot-rune-mana");
     const runeEnabledInput = panel.querySelector("#minibia-bot-rune-enabled");
     const autoEatEnabledInput = panel.querySelector("#minibia-bot-auto-eat-enabled");
+    const autoHealEnabledInput = panel.querySelector("#minibia-bot-auto-heal-enabled");
+    const autoHealMinHpInput = panel.querySelector("#minibia-bot-auto-heal-min-hp");
+    const autoHealHpHotkeyInput = panel.querySelector("#minibia-bot-auto-heal-hp-hotkey");
+    const autoHealMinManaInput = panel.querySelector("#minibia-bot-auto-heal-min-mana");
+    const autoHealManaHotkeyInput = panel.querySelector("#minibia-bot-auto-heal-mana-hotkey");
     const panicGmNameInput = panel.querySelector("#minibia-bot-panic-gm-input");
     const panicGmAddButton = panel.querySelector("#minibia-bot-panic-gm-add");
     const panicUnknownInput = panel.querySelector("#minibia-bot-panic-unknown");
@@ -808,6 +879,66 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
       });
     }
 
+    if (autoHealMinHpInput) {
+      autoHealMinHpInput.value = String(bot.heal?.config?.minHp ?? 0);
+      autoHealMinHpInput.addEventListener("change", () => {
+        const minHp = Math.max(0, Number(autoHealMinHpInput.value) || 0);
+        autoHealMinHpInput.value = String(minHp);
+        bot.heal.updateConfig({ minHp });
+      });
+    }
+
+    if (autoHealHpHotkeyInput) {
+      autoHealHpHotkeyInput.value = String(bot.heal?.config?.hpHotbarSlot ?? 1);
+      autoHealHpHotkeyInput.addEventListener("change", () => {
+        const hpHotbarSlot = Math.min(12, Math.max(1, Number(autoHealHpHotkeyInput.value) || 1));
+        autoHealHpHotkeyInput.value = String(hpHotbarSlot);
+        bot.heal.updateConfig({ hpHotbarSlot });
+      });
+    }
+
+    if (autoHealMinManaInput) {
+      autoHealMinManaInput.value = String(bot.heal?.config?.minMana ?? 0);
+      autoHealMinManaInput.addEventListener("change", () => {
+        const minMana = Math.max(0, Number(autoHealMinManaInput.value) || 0);
+        autoHealMinManaInput.value = String(minMana);
+        bot.heal.updateConfig({ minMana });
+      });
+    }
+
+    if (autoHealManaHotkeyInput) {
+      autoHealManaHotkeyInput.value = String(bot.heal?.config?.manaHotbarSlot ?? 1);
+      autoHealManaHotkeyInput.addEventListener("change", () => {
+        const manaHotbarSlot = Math.min(12, Math.max(1, Number(autoHealManaHotkeyInput.value) || 1));
+        autoHealManaHotkeyInput.value = String(manaHotbarSlot);
+        bot.heal.updateConfig({ manaHotbarSlot });
+      });
+    }
+
+    if (autoHealEnabledInput) {
+      autoHealEnabledInput.checked = !!bot.heal?.status?.().running;
+      autoHealEnabledInput.addEventListener("change", () => {
+        const minHp = Math.max(0, Number(autoHealMinHpInput?.value) || bot.heal.config.minHp || 0);
+        const hpHotbarSlot = Math.min(
+          12,
+          Math.max(1, Number(autoHealHpHotkeyInput?.value) || bot.heal.config.hpHotbarSlot || 1)
+        );
+        const minMana = Math.max(0, Number(autoHealMinManaInput?.value) || bot.heal.config.minMana || 0);
+        const manaHotbarSlot = Math.min(
+          12,
+          Math.max(1, Number(autoHealManaHotkeyInput?.value) || bot.heal.config.manaHotbarSlot || 1)
+        );
+
+        if (autoHealEnabledInput.checked) {
+          bot.heal.start({ minHp, hpHotbarSlot, minMana, manaHotbarSlot });
+        } else {
+          bot.heal.stop();
+        }
+
+        refreshAutoHealStatus();
+      });
+    }
+
     if (panicUnknownInput) {
       panicUnknownInput.checked = !!bot.panic?.status?.().config?.unknownPlayerEnabled;
       panicUnknownInput.addEventListener("change", () => {
@@ -843,6 +974,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     renderGameMasterNames();
     renderTrustedNames();
     refreshRuneStatus();
+    refreshAutoHealStatus();
     refreshAutoEatStatus();
     refreshVisibleCreatures();
 
@@ -860,6 +992,7 @@ window.__minibiaBotBundle.installPanel = function installPanel(bot) {
     refreshPanicStatus,
     refreshXrayStatus,
     refreshRuneStatus,
+    refreshAutoHealStatus,
     refreshAutoEatStatus,
     refreshVisibleCreatures,
     getSavedPanelPosition,

@@ -29,6 +29,7 @@ This repo now has a simple source layout for browser-loaded Minibia routines, wh
 - [src/core.js](/home/yuno/minibia-bot/src/core.js): shared runtime helpers
 - [src/modules/pz.js](/home/yuno/minibia-bot/src/modules/pz.js): PZ/home navigation module
 - [src/modules/rune.js](/home/yuno/minibia-bot/src/modules/rune.js): rune loop module
+- [src/modules/heal.js](/home/yuno/minibia-bot/src/modules/heal.js): auto heal loop for hp and mana hotkeys
 - [src/ui/panel.js](/home/yuno/minibia-bot/src/ui/panel.js): draggable in-game panel
 - [src/main.js](/home/yuno/minibia-bot/src/main.js): bundle entrypoint
 - [build.sh](/home/yuno/minibia-bot/build.sh): rebuilds `pz-bot.js` from `src/`
@@ -62,6 +63,10 @@ minibiaBot.pz.goToNearestPz()
 minibiaBot.rune.start()
 minibiaBot.rune.stop()
 minibiaBot.rune.status()
+
+minibiaBot.heal.start()
+minibiaBot.heal.stop()
+minibiaBot.heal.status()
 
 ```
 
