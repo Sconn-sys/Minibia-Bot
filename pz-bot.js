@@ -2021,6 +2021,16 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       Math.abs(Number(from.y) - Number(to.y)) <= 1;
   }
 
+  function isAdjacentTile(from, to) {
+    if (!from || !to || Number(from.z) !== Number(to.z)) {
+      return false;
+    }
+
+    const dx = Math.abs(Number(from.x) - Number(to.x));
+    const dy = Math.abs(Number(from.y) - Number(to.y));
+    return (dx !== 0 || dy !== 0) && dx <= 1 && dy <= 1;
+  }
+
   function getDistanceToWaypoint(position, waypoint) {
     if (!position || !waypoint) {
       return null;
@@ -2760,7 +2770,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
-    if (!isBesideOrSameTile(playerPosition, targetPosition)) {
+    if (!isAdjacentTile(playerPosition, targetPosition)) {
       const adjacentPosition = findAdjacentWalkablePosition(targetPosition, playerPosition);
       if (adjacentPosition) {
         return goToPosition(adjacentPosition);
@@ -2864,6 +2874,20 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return false;
     }
 
+    const visibleCandidate = findNearbyTransitionTile(position, waypoint);
+    if (visibleCandidate) {
+      const moved = useFloorChangeTile(visibleCandidate, waypoint, now);
+      if (moved) {
+        bot.log("cave probing visible floor-change tile", {
+          tileX: visibleCandidate.position.x,
+          tileY: visibleCandidate.position.y,
+          tileZ: visibleCandidate.position.z,
+          targetZ: waypoint.z,
+        });
+        return true;
+      }
+    }
+
     const knownTransition = findBestKnownTransition(position, waypoint);
     if (knownTransition) {
       const target = {
@@ -2886,22 +2910,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         waypoint,
       });
     }
-
-    const fallback = findNearbyTransitionTile(position, waypoint);
-    if (!fallback) {
-      return false;
-    }
-
-    const moved = useFloorChangeTile(fallback, waypoint, now);
-    if (moved) {
-      bot.log("cave probing floor-change tile", {
-        tileX: fallback.position.x,
-        tileY: fallback.position.y,
-        tileZ: fallback.position.z,
-        targetZ: waypoint.z,
-      });
-    }
-    return moved;
+    return false;
   }
 
   function advanceWaypoint() {
