@@ -7,6 +7,14 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
   const minimapOverlayRootId = "minibia-bot-cave-minimap-overlay";
   const minimapOverlayStyleId = "minibia-bot-cave-minimap-overlay-style";
   const ladderItemIds = new Set([1948, 1968]);
+  const ropeNamePattern = /\brope\b/i;
+  const shovelNamePattern = /\bshovel\b/i;
+  const shovelTargetNamePatterns = [
+    /\bstone pile\b/i,
+    /\bloose stone pile\b/i,
+    /\bgravel pile\b/i,
+    /\bdirt pile\b/i,
+  ];
   const state = {
     running: false,
     timerId: null,
@@ -151,6 +159,15 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return Math.abs(Number(from.x) - Number(to.x)) + Math.abs(Number(from.y) - Number(to.y));
   }
 
+  function isBesideOrSameTile(from, to) {
+    if (!from || !to || Number(from.z) !== Number(to.z)) {
+      return false;
+    }
+
+    return Math.abs(Number(from.x) - Number(to.x)) <= 1 &&
+      Math.abs(Number(from.y) - Number(to.y)) <= 1;
+  }
+
   function getDistanceToWaypoint(position, waypoint) {
     if (!position || !waypoint) {
       return null;
@@ -213,6 +230,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
     return (
       window.gameClient?.itemDefinitionsByCid?.[itemId] ||
+      window.gameClient?.itemDefinitionsBySid?.[itemId] ||
       window.gameClient?.itemDefinitions?.[itemId] ||
       null
     );
@@ -291,6 +309,57 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
 
   function isHoleTile(tile) {
     return tileHasNamedThing(tile, "hole");
+  }
+
+  function isRopeSpotTile(tile) {
+    return tileHasNamedThing(tile, "rope spot");
+  }
+
+  function isRopeTargetTile(tile) {
+    return isHoleTile(tile) || isRopeSpotTile(tile);
+  }
+
+  function isShovelTargetThing(thing) {
+    const name = getThingName(thing);
+    if (!name) {
+      return false;
+    }
+
+    return shovelTargetNamePatterns.some((pattern) => pattern.test(name));
+  }
+
+  function isShovelTargetTile(tile) {
+    return getTileThings(tile).some((thing) => isShovelTargetThing(thing));
+  }
+
+  function isTransitionCandidateTile(tile, waypoint, position) {
+    if (!tile) {
+      return false;
+    }
+
+    if (isFloorChangeTile(tile)) {
+      return true;
+    }
+
+    const hasWaypointDelta =
+      waypoint &&
+      position &&
+      Number.isFinite(waypoint.z) &&
+      Number.isFinite(position.z);
+
+    if (!hasWaypointDelta) {
+      return false;
+    }
+
+    if (waypoint.z > position.z) {
+      return isShovelTargetTile(tile);
+    }
+
+    if (waypoint.z < position.z) {
+      return isRopeTargetTile(tile);
+    }
+
+    return false;
   }
 
   function getFloorChangeTileBias(tile, position, waypoint) {
@@ -527,7 +596,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     destroyMinimapOverlayElements();
   }
 
-  function getNearbyFloorChangeTiles(position, radius = 8) {
+  function getNearbyTransitionTiles(position, waypoint, radius = 8) {
     if (!position) {
       return [];
     }
@@ -539,11 +608,11 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
         entry.position.z === position.z &&
         Math.abs(entry.position.x - position.x) <= radius &&
         Math.abs(entry.position.y - position.y) <= radius &&
-        isFloorChangeTile(entry.tile)
+        isTransitionCandidateTile(entry.tile, waypoint, position)
       );
   }
 
-  function findFloorChangeTileNearPosition(position, radius = 1) {
+  function findTransitionTileNearPosition(position, waypoint, radius = 1) {
     if (!position) {
       return null;
     }
@@ -551,7 +620,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     let best = null;
     let bestDistance = Number.POSITIVE_INFINITY;
 
-    getNearbyFloorChangeTiles(position, radius).forEach((entry) => {
+    getNearbyTransitionTiles(position, waypoint, radius).forEach((entry) => {
       const distance = getDistance(position, entry.position);
       if (!Number.isFinite(distance)) {
         return;
@@ -595,7 +664,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     return best;
   }
 
-  function findNearbyFloorChangeTile(position, waypoint) {
+  function findNearbyTransitionTile(position, waypoint) {
     if (!position || !waypoint) {
       return null;
     }
@@ -605,7 +674,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     let best = null;
     let bestScore = Number.POSITIVE_INFINITY;
 
-    getNearbyFloorChangeTiles(position, radius).forEach((entry) => {
+    getNearbyTransitionTiles(position, waypoint, radius).forEach((entry) => {
       const playerDistance = getDistance(position, entry.position);
       const tileToWaypointDistance =
         Math.abs(entry.position.x - waypoint.x) + Math.abs(entry.position.y - waypoint.y);
@@ -718,7 +787,7 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return previousPosition;
     }
 
-    const nearby = findFloorChangeTileNearPosition(previousPosition, 1);
+    const nearby = findTransitionTileNearPosition(previousPosition, null, 1);
     if (nearby?.position) {
       return nearby.position;
     }
@@ -744,6 +813,143 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     state.lastObservedPosition = current;
   }
 
+  function getEquipment() {
+    return window.gameClient?.player?.equipment || null;
+  }
+
+  function getOpenContainers() {
+    return Array.from(window.gameClient?.player?.__openedContainers || []);
+  }
+
+  function findAdjacentWalkablePosition(targetPosition, playerPosition) {
+    if (!targetPosition || !playerPosition) {
+      return null;
+    }
+
+    const offsets = [
+      { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
+      { x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: 1, y: 1 },
+    ];
+
+    offsets.sort((a, b) => {
+      const da = Math.abs(targetPosition.x + a.x - playerPosition.x) +
+        Math.abs(targetPosition.y + a.y - playerPosition.y);
+      const db = Math.abs(targetPosition.x + b.x - playerPosition.x) +
+        Math.abs(targetPosition.y + b.y - playerPosition.y);
+      return da - db;
+    });
+
+    for (const offset of offsets) {
+      const position = new Position(
+        targetPosition.x + offset.x,
+        targetPosition.y + offset.y,
+        targetPosition.z
+      );
+      const tile = window.gameClient?.world?.getTileFromWorldPosition?.(position);
+      if (tile?.isWalkable?.()) {
+        return normalizePosition(position);
+      }
+    }
+
+    return null;
+  }
+
+  function isRopeItem(item) {
+    const name = getThingName(item);
+    return !!name && ropeNamePattern.test(name);
+  }
+
+  function isShovelItem(item) {
+    const name = getThingName(item);
+    return !!name && shovelNamePattern.test(name);
+  }
+
+  function findToolSource(predicate) {
+    const equipment = getEquipment();
+
+    if (equipment?.slots) {
+      for (let slotIndex = 0; slotIndex < equipment.slots.length; slotIndex += 1) {
+        const item = equipment.getSlotItem?.(slotIndex);
+        if (predicate(item)) {
+          return { which: equipment, index: slotIndex, item, location: "equipment" };
+        }
+      }
+    }
+
+    for (const container of getOpenContainers()) {
+      const slots = container?.slots || [];
+      for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+        const item = container.getSlotItem?.(slotIndex);
+        if (predicate(item)) {
+          return { which: container, index: slotIndex, item, location: "container" };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function findRopeSource() {
+    return findToolSource(isRopeItem);
+  }
+
+  function findShovelSource() {
+    return findToolSource(isShovelItem);
+  }
+
+  function useToolOnTile(tool, targetTile, targetPosition, actionLabel, now = Date.now()) {
+    if (!tool || !targetTile || !targetPosition) {
+      return false;
+    }
+
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
+    if (!playerPosition) {
+      return false;
+    }
+
+    if (!isBesideOrSameTile(playerPosition, targetPosition)) {
+      const adjacentPosition = findAdjacentWalkablePosition(targetPosition, playerPosition);
+      if (adjacentPosition) {
+        return goToPosition(adjacentPosition);
+      }
+    }
+
+    window.gameClient?.mouse?.__handleItemUseWith?.(
+      { which: tool.which, index: tool.index },
+      { which: targetTile, index: 0xFF }
+    );
+    state.lastStairsUseAt = now;
+    state.lastPathAt = now;
+    markPendingTransitionSource(targetPosition);
+    bot.log(actionLabel, {
+      source: targetPosition,
+      toolLocation: tool.location,
+      toolSlot: tool.index,
+      toolName: getThingName(tool.item),
+    });
+    return true;
+  }
+
+  function useRopeOnTile(targetTile, targetPosition, now = Date.now()) {
+    return useToolOnTile(
+      findRopeSource(),
+      targetTile,
+      targetPosition,
+      "cave roped transition tile",
+      now
+    );
+  }
+
+  function useShovelOnTile(targetTile, targetPosition, now = Date.now()) {
+    return useToolOnTile(
+      findShovelSource(),
+      targetTile,
+      targetPosition,
+      "cave shoveled transition tile",
+      now
+    );
+  }
+
   function useFloorChangeTile(target, waypoint, now = Date.now()) {
     const position = normalizePosition(bot.getPlayerPosition());
     const targetPosition = normalizePosition(target?.position);
@@ -756,7 +962,14 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
       return true;
     }
 
+    if (waypoint?.z < position.z && isRopeTargetTile(targetTile)) {
+      return useRopeOnTile(targetTile, targetPosition, now);
+    }
+
     if (!isFloorChangeTile(targetTile)) {
+      if (waypoint?.z > position.z && isShovelTargetTile(targetTile)) {
+        return useShovelOnTile(targetTile, targetPosition, now);
+      }
       return false;
     }
 
@@ -811,11 +1024,17 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
           to: knownTransition.to,
           waypoint,
         });
+        return true;
       }
-      return moved;
+
+      bot.log("cave learned transition unavailable, falling back to live scan", {
+        from: knownTransition.from,
+        to: knownTransition.to,
+        waypoint,
+      });
     }
 
-    const fallback = findNearbyFloorChangeTile(position, waypoint);
+    const fallback = findNearbyTransitionTile(position, waypoint);
     if (!fallback) {
       return false;
     }
@@ -1137,6 +1356,31 @@ window.__minibiaBotBundle.installCaveModule = function installCaveModule(bot) {
     goToPosition,
     handleFloorChange,
     findClosestWaypointIndex,
+    findRopeSource,
+    findShovelSource,
+    inspectNearbyTiles: (radius = 1) => {
+      const position = normalizePosition(bot.getPlayerPosition());
+      if (!position) {
+        return [];
+      }
+
+      return getLoadedTiles()
+        .map((tile) => ({ tile, position: getTilePosition(tile) }))
+        .filter((entry) =>
+          entry.position &&
+          entry.position.z === position.z &&
+          Math.abs(entry.position.x - position.x) <= radius &&
+          Math.abs(entry.position.y - position.y) <= radius
+        )
+        .map((entry) => ({
+          position: entry.position,
+          isFloorChange: isFloorChangeTile(entry.tile),
+          isHole: isHoleTile(entry.tile),
+          isRopeTarget: isRopeTargetTile(entry.tile),
+          isShovelTarget: isShovelTargetTile(entry.tile),
+          names: getTileThings(entry.tile).map((thing) => getThingName(thing)).filter(Boolean),
+        }));
+    },
     isAtWaypoint,
   };
 };
