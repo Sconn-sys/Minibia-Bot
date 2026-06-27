@@ -8841,6 +8841,21 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
         vocation: info?.vocation ?? null,
         infoUpdatedAt: info?.lastUpdatedAt || 0,
       };
+    })
+    .sort((a, b) => {
+      const onlineDelta = (isOnline(b.name) ? 1 : 0) - (isOnline(a.name) ? 1 : 0);
+      if (onlineDelta !== 0) return onlineDelta;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
+  }
+
+  function sortDeaths(deaths) {
+    return deaths.slice().sort((a, b) => {
+      const onlineDelta = (isOnline(b.name) ? 1 : 0) - (isOnline(a.name) ? 1 : 0);
+      if (onlineDelta !== 0) return onlineDelta;
+      const nameDelta = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      if (nameDelta !== 0) return nameDelta;
+      return Number(b.at || 0) - Number(a.at || 0);
     });
   }
 
@@ -8859,9 +8874,9 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       friendlyDetails: annotatePlayers(friendlyPlayers),
       online: allNames.filter((n) => isOnline(n)),
       offline: allNames.filter((n) => !isOnline(n)),
-      enemyDeaths: getRecentDeaths("enemy"),
-      friendlyDeaths: getRecentDeaths("friendly"),
-      recentDeaths: getRecentDeaths(),
+      enemyDeaths: sortDeaths(getRecentDeaths("enemy")),
+      friendlyDeaths: sortDeaths(getRecentDeaths("friendly")),
+      recentDeaths: sortDeaths(getRecentDeaths()),
       lastPollAt: state.lastPollAt,
       lastError: state.lastError,
       pollInFlight: state.pollInFlight,
@@ -10742,7 +10757,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
       #minibia-copilot-panel #minibia-copilot-tracker-list,
       #minibia-copilot-panel #minibia-copilot-tracker-deaths {
-        max-height: 220px;
+        max-height: 360px;
         overflow-y: auto;
         padding-right: 4px;
         scrollbar-width: thin;

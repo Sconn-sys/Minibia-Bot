@@ -1606,7 +1606,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
       #minibia-copilot-panel #minibia-copilot-tracker-list,
       #minibia-copilot-panel #minibia-copilot-tracker-deaths {
-        max-height: 220px;
+        max-height: 360px;
         overflow-y: auto;
         padding-right: 4px;
         scrollbar-width: thin;
