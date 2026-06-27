@@ -379,18 +379,15 @@ window.__minibiaBotBundle.installMagicWallModule = function installMagicWallModu
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, width, height);
 
-    const internalWidth = Number(viewport.canvas.width) || 480;
-    const internalHeight = Number(viewport.canvas.height) || 352;
     const scaling = getScalingVector();
     const moveOffset = getPlayerMoveOffset();
-    const tilePixelWidth = scaling.x;
-    const tilePixelHeight = scaling.y;
-    const renderScaleX = width / internalWidth;
-    const renderScaleY = height / internalHeight;
     const now = Date.now();
+    const tilePixelWidth = Math.max(1, scaling.x);
+    const tilePixelHeight = Math.max(1, scaling.y);
+    const fontSize = Math.max(10, Math.round(tilePixelHeight * 0.45));
 
     context.save();
-    context.font = "bold 14px Verdana, sans-serif";
+    context.font = `bold ${fontSize}px Verdana, sans-serif`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.lineWidth = 3;
@@ -401,20 +398,21 @@ window.__minibiaBotBundle.installMagicWallModule = function installMagicWallModu
       const { tileX, tileY } = worldToCanvasTile(entry.position, playerPosition, moveOffset);
       if (tileX < -1 || tileX > 16 || tileY < -1 || tileY > 12) continue;
 
-      const internalCenterX = (tileX + 0.5) * tilePixelWidth;
-      const internalCenterY = (tileY + 0.5) * tilePixelHeight;
-      const cx = internalCenterX * renderScaleX;
-      const cy = internalCenterY * renderScaleY;
+      const cx = (tileX + 0.5) * tilePixelWidth;
+      const cy = (tileY + 0.5) * tilePixelHeight;
+      if (cx < -tilePixelWidth || cx > width + tilePixelWidth) continue;
+      if (cy < -tilePixelHeight || cy > height + tilePixelHeight) continue;
+
       const remainingMs = Math.max(0, entry.expiresAt - now);
       const secondsLeft = Math.ceil(remainingMs / 1000);
       const isExpiring = remainingMs <= Math.max(0, Number(config.flashLeadMs) || 0);
       const flashOn = isExpiring && Math.floor(now / 250) % 2 === 0;
       const color = isExpiring && flashOn ? "#ff4d4d" : (entry.spec?.color || "#7ec8ff");
 
-      const radius = 16 * Math.min(renderScaleX, renderScaleY);
+      const radius = Math.max(10, Math.round(tilePixelHeight * 0.4));
       context.beginPath();
       context.arc(cx, cy, radius, 0, Math.PI * 2);
-      context.fillStyle = "rgba(0, 0, 0, 0.55)";
+      context.fillStyle = "rgba(0, 0, 0, 0.6)";
       context.fill();
       context.strokeStyle = color;
       context.stroke();
