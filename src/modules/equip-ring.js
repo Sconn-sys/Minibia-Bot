@@ -15,10 +15,23 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
       tickMs: 1000,
       equipCooldownMs: 1500,
       enabled: false,
+      ringName: "",
     },
     bot.storage.get(configStorageKey, {})
   );
   config.tickMs = 1000;
+
+  function normalizeRingName(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function matchesDesiredRing(item) {
+    const desired = normalizeRingName(config.ringName);
+    if (!desired) return true;
+    const itemName = normalizeRingName(getItemName(item));
+    if (!itemName) return false;
+    return itemName === desired || itemName.startsWith(desired + " ") || itemName.startsWith(desired + "(");
+  }
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -86,6 +99,9 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
     const consider = (container, slotIndex, item) => {
       if (!isRingItem(item)) {
+        return;
+      }
+      if (!matchesDesiredRing(item)) {
         return;
       }
 
@@ -269,6 +285,9 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
   }
 
   function updateConfig(nextConfig = {}) {
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "ringName")) {
+      nextConfig.ringName = String(nextConfig.ringName || "").trim();
+    }
     Object.assign(config, nextConfig);
     config.tickMs = 1000;
     persistConfig();

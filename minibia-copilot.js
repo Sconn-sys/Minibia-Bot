@@ -5587,10 +5587,23 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
       tickMs: 1000,
       equipCooldownMs: 1500,
       enabled: false,
+      ringName: "",
     },
     bot.storage.get(configStorageKey, {})
   );
   config.tickMs = 1000;
+
+  function normalizeRingName(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function matchesDesiredRing(item) {
+    const desired = normalizeRingName(config.ringName);
+    if (!desired) return true;
+    const itemName = normalizeRingName(getItemName(item));
+    if (!itemName) return false;
+    return itemName === desired || itemName.startsWith(desired + " ") || itemName.startsWith(desired + "(");
+  }
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -5658,6 +5671,9 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
     const consider = (container, slotIndex, item) => {
       if (!isRingItem(item)) {
+        return;
+      }
+      if (!matchesDesiredRing(item)) {
         return;
       }
 
@@ -5841,6 +5857,9 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
   }
 
   function updateConfig(nextConfig = {}) {
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "ringName")) {
+      nextConfig.ringName = String(nextConfig.ringName || "").trim();
+    }
     Object.assign(config, nextConfig);
     config.tickMs = 1000;
     persistConfig();
@@ -9060,10 +9079,35 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
           <div class="mc-section">
             <div class="mc-label">Equip Ring</div>
-            <label class="mc-toggle">
-              <input type="checkbox" id="minibia-copilot-equip-ring-enabled" />
-              <span>Keep ring equipped</span>
-            </label>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-equip-ring-enabled" />
+                <span>Keep ring equipped</span>
+              </label>
+              <label class="mc-field" for="minibia-copilot-equip-ring-type">
+                <span class="mc-field-label">Ring type</span>
+                <select id="minibia-copilot-equip-ring-type">
+                  <option value="">Any ring</option>
+                  <option value="life ring">Life Ring</option>
+                  <option value="ring of healing">Ring of Healing</option>
+                  <option value="energy ring">Energy Ring</option>
+                  <option value="power ring">Power Ring</option>
+                  <option value="time ring">Time Ring</option>
+                  <option value="axe ring">Axe Ring</option>
+                  <option value="sword ring">Sword Ring</option>
+                  <option value="club ring">Club Ring</option>
+                  <option value="dwarven ring">Dwarven Ring</option>
+                  <option value="stealth ring">Stealth Ring</option>
+                  <option value="gold ring">Gold Ring</option>
+                  <option value="wedding ring">Wedding Ring</option>
+                </select>
+              </label>
+              <label class="mc-field" for="minibia-copilot-equip-ring-custom">
+                <span class="mc-field-label">Custom (overrides dropdown)</span>
+                <input type="text" id="minibia-copilot-equip-ring-custom" placeholder="e.g. might ring" />
+              </label>
+              <div class="mc-small-note">Only re-equips when the ring slot is empty. If the wrong ring is equipped, unequip it once and the bot will put the chosen ring on.</div>
+            </div>
           </div>
 
           <div class="mc-section">
@@ -9233,6 +9277,8 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const autoInvisibleEnabledInput = panel.querySelector("#minibia-copilot-auto-invisible-enabled");
     const autoMagicShieldEnabledInput = panel.querySelector("#minibia-copilot-auto-magic-shield-enabled");
     const equipRingEnabledInput = panel.querySelector("#minibia-copilot-equip-ring-enabled");
+    const equipRingTypeSelect = panel.querySelector("#minibia-copilot-equip-ring-type");
+    const equipRingCustomInput = panel.querySelector("#minibia-copilot-equip-ring-custom");
     const autoHealEnabledInput = panel.querySelector("#minibia-copilot-auto-heal-enabled");
     const autoHealMinHpInput = panel.querySelector("#minibia-copilot-auto-heal-min-hp");
     const autoHealHpHotkeyInput = panel.querySelector("#minibia-copilot-auto-heal-hp-hotkey");
@@ -9461,6 +9507,31 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
         refreshEquipRingStatus();
       });
+    }
+
+    const initialRingName = String(bot.equipRing?.config?.ringName || "").trim();
+    const knownPresetValues = equipRingTypeSelect
+      ? Array.from(equipRingTypeSelect.options).map((option) => option.value)
+      : [];
+    const initialIsPreset = knownPresetValues.includes(initialRingName.toLowerCase());
+    if (equipRingTypeSelect) {
+      equipRingTypeSelect.value = initialIsPreset ? initialRingName.toLowerCase() : "";
+    }
+    if (equipRingCustomInput) {
+      equipRingCustomInput.value = initialIsPreset ? "" : initialRingName;
+    }
+
+    function applyRingName() {
+      const custom = equipRingCustomInput?.value?.trim() || "";
+      const preset = equipRingTypeSelect?.value?.trim() || "";
+      bot.equipRing?.updateConfig?.({ ringName: custom || preset });
+    }
+
+    if (equipRingTypeSelect) {
+      equipRingTypeSelect.addEventListener("change", applyRingName);
+    }
+    if (equipRingCustomInput) {
+      equipRingCustomInput.addEventListener("change", applyRingName);
     }
 
     if (caveRecordButton) {
