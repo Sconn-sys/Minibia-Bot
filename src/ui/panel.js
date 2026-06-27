@@ -252,7 +252,8 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
           Number.isFinite(status?.distanceToWaypoint) && status.distanceToWaypoint >= 0
             ? `, dist ${status.distanceToWaypoint}`
             : "";
-        statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel})`;
+        const pausedTag = status.userPaused ? " — PAUSED" : "";
+        statusLabel.textContent = `Status: running (${waypointNumber}/${route.length}${distanceLabel})${pausedTag}`;
       } else {
         statusLabel.textContent = `Status: idle (${route.length} waypoint${route.length === 1 ? "" : "s"})`;
       }
@@ -1051,6 +1052,13 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         line-height: 1;
       }
 
+      #minibia-copilot-panel #minibia-copilot-cave-pause-toggle[data-paused="true"] {
+        color: #ffcf5a;
+        border-color: rgba(255, 207, 90, 0.6);
+        background: linear-gradient(180deg, rgba(120, 80, 20, 0.7), rgba(60, 40, 10, 0.7));
+        box-shadow: 0 0 8px rgba(255, 207, 90, 0.4) inset;
+      }
+
       #minibia-copilot-panel[data-collapsed="true"] .mc-tabs,
       #minibia-copilot-panel[data-collapsed="true"] .mc-hero,
       #minibia-copilot-panel[data-collapsed="true"] .mc-body {
@@ -1662,6 +1670,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       <div class="mc-titlebar">
         <div class="mc-title">Minibia <span class="mc-title-accent">Copilot</span></div>
         <div class="mc-titlebar-actions">
+          <button type="button" class="mc-icon-button" id="minibia-copilot-cave-pause-toggle" aria-label="Pause cavebot" title="Pause cavebot">⏸</button>
           <button type="button" class="mc-icon-button" id="minibia-copilot-reload" aria-label="Reload bot" title="Reload bot">⟳</button>
           <button type="button" class="mc-icon-button" id="minibia-copilot-collapse" aria-label="Minimize panel" title="Minimize">−</button>
         </div>
@@ -2171,6 +2180,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const xrayFloorSelect = panel.querySelector("#minibia-copilot-xray-floor-select");
     const collapseButton = panel.querySelector("#minibia-copilot-collapse");
     const reloadButton = panel.querySelector("#minibia-copilot-reload");
+    const cavePauseToggle = panel.querySelector("#minibia-copilot-cave-pause-toggle");
     const caveRecordButton = panel.querySelector("#minibia-copilot-cave-record");
     const caveRemoveLastButton = panel.querySelector("#minibia-copilot-cave-remove-last");
     const caveStartButton = panel.querySelector("#minibia-copilot-cave-start");
@@ -2205,6 +2215,26 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       reloadButton.addEventListener("click", () => {
         window.minibiaCopilotReload?.();
       });
+    }
+
+    function refreshCavePauseToggle() {
+      if (!cavePauseToggle) return;
+      const paused = !!bot.cave?.isPaused?.();
+      cavePauseToggle.textContent = paused ? "▶" : "⏸";
+      cavePauseToggle.dataset.paused = paused ? "true" : "false";
+      cavePauseToggle.setAttribute("title", paused ? "Resume cavebot" : "Pause cavebot");
+      cavePauseToggle.setAttribute("aria-label", paused ? "Resume cavebot" : "Pause cavebot");
+    }
+
+    if (cavePauseToggle) {
+      cavePauseToggle.addEventListener("click", () => {
+        bot.cave?.togglePause?.();
+        refreshCavePauseToggle();
+        refreshCaveStatus();
+      });
+      refreshCavePauseToggle();
+      const pauseTimerId = window.setInterval(refreshCavePauseToggle, 1000);
+      bot.addCleanup(() => window.clearInterval(pauseTimerId));
     }
 
     function addTrustedName() {

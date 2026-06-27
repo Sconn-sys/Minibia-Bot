@@ -40,6 +40,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   };
   const state = {
     running: false,
+    userPaused: false,
     timerId: null,
     observerTimerId: null,
     currentIndex: 0,
@@ -1569,6 +1570,11 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     try {
       observePosition();
 
+      if (state.userPaused) {
+        state.lastProgressAt = Date.now();
+        return;
+      }
+
       if (!route.length) {
         stop();
         return;
@@ -1892,12 +1898,42 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     return state.currentIndex;
   }
 
+  function pause() {
+    if (state.userPaused) return false;
+    state.userPaused = true;
+    bot.log("cave bot user-paused");
+    return true;
+  }
+
+  function resume() {
+    if (!state.userPaused) return false;
+    state.userPaused = false;
+    state.lastProgressAt = Date.now();
+    state.lastPathAt = 0;
+    bot.log("cave bot user-resumed");
+    return true;
+  }
+
+  function togglePause() {
+    if (state.userPaused) {
+      resume();
+      return false;
+    }
+    pause();
+    return true;
+  }
+
+  function isPaused() {
+    return !!state.userPaused;
+  }
+
   function status() {
     const position = normalizePosition(bot.getPlayerPosition());
     const waypoint = getCurrentWaypoint();
 
     return {
       running: state.running,
+      userPaused: state.userPaused,
       config: { ...config },
       route: getRoute(),
       transitions: getTransitions(),
@@ -1934,6 +1970,10 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   bot.cave = {
     start,
     stop,
+    pause,
+    resume,
+    togglePause,
+    isPaused,
     status,
     updateConfig,
     config,
