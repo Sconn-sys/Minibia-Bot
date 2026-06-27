@@ -13,6 +13,7 @@ cat \
   src/modules/auto-attack.js \
   src/modules/cave.js \
   src/modules/equip-ring.js \
+  src/modules/equip-amulet.js \
   src/modules/auto-eat.js \
   src/modules/talk.js \
   src/modules/magic-wall.js \

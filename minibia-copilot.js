@@ -297,6 +297,10 @@ window.__minibiaCopilotBundle.createBot = function createBot() {
         this.equipRing.stop({ persistEnabled: false });
       }
 
+      if (this.equipAmulet?.stop) {
+        this.equipAmulet.stop({ persistEnabled: false });
+      }
+
       if (this.eat?.stop) {
         this.eat.stop({ persistEnabled: false });
       }
@@ -5588,6 +5592,7 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
       equipCooldownMs: 1500,
       enabled: false,
       ringName: "",
+      autoSwap: false,
     },
     bot.storage.get(configStorageKey, {})
   );
@@ -5698,19 +5703,42 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
     return best;
   }
 
+  function findEmptyContainerSlot() {
+    for (const container of getOpenContainers()) {
+      const slots = container?.slots || [];
+      for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+        const item = container.getSlotItem?.(slotIndex);
+        if (!item) {
+          return { container, slotIndex };
+        }
+      }
+    }
+    return null;
+  }
+
   function getGateStatus(now = Date.now()) {
     const equipment = getEquipment();
+    const equippedRing = getEquippedRing();
     const source = findBestRingSource();
     const cooldownRemainingMs = Math.max(0, config.equipCooldownMs - (now - state.lastEquipAt));
+    const wrongRingEquipped = !!equippedRing && !matchesDesiredRing(equippedRing);
+    const emptyBackpackSlot = wrongRingEquipped && config.autoSwap ? findEmptyContainerSlot() : null;
+    const canSwap = wrongRingEquipped && config.autoSwap && !!emptyBackpackSlot;
 
     return {
       hasEquipment: !!equipment,
-      hasRingEquipped: hasEquippedRing(),
+      hasRingEquipped: !!equippedRing,
+      wrongRingEquipped,
       hasRingAvailable: !!source,
       cooldownReady: cooldownRemainingMs === 0,
       cooldownRemainingMs,
       source,
-      canEquip: !!equipment && !hasEquippedRing() && !!source && cooldownRemainingMs === 0,
+      canEquip:
+        !!equipment &&
+        !!source &&
+        cooldownRemainingMs === 0 &&
+        (!equippedRing || canSwap),
+      canSwap,
     };
   }
 
@@ -5719,27 +5747,48 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
   }
 
   function tryEquipRing(now = Date.now()) {
-    if (!config.enabled || !canEquipRing(now)) {
-      return false;
-    }
+    if (!config.enabled) return false;
+    const cooldownRemainingMs = Math.max(0, config.equipCooldownMs - (now - state.lastEquipAt));
+    if (cooldownRemainingMs > 0) return false;
 
     const equipment = getEquipment();
-    const source = findBestRingSource();
-    if (!equipment || !source) {
-      return false;
+    if (!equipment) return false;
+
+    const equippedRing = getEquippedRing();
+
+    if (equippedRing) {
+      if (matchesDesiredRing(equippedRing)) return false;
+      if (!config.autoSwap) return false;
+
+      const emptyBackpackSlot = findEmptyContainerSlot();
+      if (!emptyBackpackSlot) {
+        bot.log("equip ring: cannot swap, no empty backpack slot");
+        return false;
+      }
+
+      const ringCount = (typeof equippedRing.getCount === "function" ? equippedRing.getCount() : equippedRing.count) || 1;
+      window.gameClient.send(new ItemMovePacket(
+        { which: equipment, index: RING_SLOT },
+        { which: emptyBackpackSlot.container, index: emptyBackpackSlot.slotIndex },
+        ringCount
+      ));
+      state.lastEquipAt = now;
+      bot.log("equip ring: unequipped wrong ring", {
+        name: getItemName(equippedRing),
+        toContainerId: emptyBackpackSlot.container?.__containerId ?? null,
+        toSlot: emptyBackpackSlot.slotIndex,
+      });
+      return true;
     }
 
-    const from = {
-      which: source.container,
-      index: source.slotIndex,
-    };
-    const to = {
-      which: equipment,
-      index: RING_SLOT,
-    };
-    const count = source.count || 1;
+    const source = findBestRingSource();
+    if (!source) return false;
 
-    window.gameClient.send(new ItemMovePacket(from, to, count));
+    window.gameClient.send(new ItemMovePacket(
+      { which: source.container, index: source.slotIndex },
+      { which: equipment, index: RING_SLOT },
+      source.count || 1
+    ));
     state.lastEquipAt = now;
     bot.log("equipped ring", {
       name: source.name,
@@ -5883,6 +5932,329 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
     getGateStatus,
     canEquipRing,
     tryEquipRing,
+  };
+};
+window.__minibiaCopilotBundle = window.__minibiaCopilotBundle || {};
+
+window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAmuletModule(bot) {
+  const configStorageKey = "minibiaCopilot.equipAmulet.config";
+  const NECKLACE_SLOT = 7;
+  const state = {
+    running: false,
+    timerId: null,
+    lastEquipAt: 0,
+  };
+  let resumeListenersAttached = false;
+
+  const config = Object.assign(
+    {
+      tickMs: 1000,
+      equipCooldownMs: 1500,
+      enabled: false,
+      amuletName: "stone skin amulet",
+      autoSwap: false,
+    },
+    bot.storage.get(configStorageKey, {})
+  );
+  config.tickMs = 1000;
+
+  function persistConfig() {
+    bot.storage.set(configStorageKey, { ...config });
+  }
+
+  function normalizeAmuletName(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function getEquipment() {
+    return window.gameClient?.player?.equipment || null;
+  }
+
+  function getOpenContainers() {
+    return Array.from(window.gameClient?.player?.__openedContainers || []);
+  }
+
+  function getItemDefinition(item) {
+    if (!item) return null;
+    return (
+      window.gameClient?.itemDefinitionsBySid?.[item.sid] ||
+      window.gameClient?.itemDefinitions?.[item.id] ||
+      null
+    );
+  }
+
+  function getItemName(item) {
+    const definition = getItemDefinition(item);
+    return definition?.properties?.name || item?.name || "";
+  }
+
+  function isAmuletItem(item) {
+    if (!item) return false;
+    const definition = getItemDefinition(item);
+    const slotType = String(
+      definition?.properties?.slotType ||
+      definition?.properties?.slot ||
+      ""
+    ).trim().toLowerCase();
+    if (slotType === "necklace" || slotType === "amulet") return true;
+    return /\b(amulet|necklace)\b/i.test(getItemName(item));
+  }
+
+  function matchesDesiredAmulet(item) {
+    const desired = normalizeAmuletName(config.amuletName);
+    if (!desired) return true;
+    const itemName = normalizeAmuletName(getItemName(item));
+    if (!itemName) return false;
+    return itemName === desired || itemName.startsWith(desired + " ") || itemName.startsWith(desired + "(");
+  }
+
+  function getEquippedAmulet() {
+    const equipment = getEquipment();
+    return equipment?.getSlotItem?.(NECKLACE_SLOT) || null;
+  }
+
+  function hasEquippedAmulet() {
+    return !!getEquippedAmulet();
+  }
+
+  function findBestAmuletSource() {
+    const equipment = getEquipment();
+    if (!equipment) return null;
+
+    let best = null;
+    let bestCount = -1;
+
+    const consider = (container, slotIndex, item) => {
+      if (!isAmuletItem(item)) return;
+      if (!matchesDesiredAmulet(item)) return;
+      const count = (typeof item.getCount === "function" ? item.getCount() : item.count) || 1;
+      if (count > bestCount) {
+        bestCount = count;
+        best = { container, slotIndex, item, count, name: getItemName(item) };
+      }
+    };
+
+    for (let slotIndex = 0; slotIndex < equipment.slots.length; slotIndex += 1) {
+      if (slotIndex === NECKLACE_SLOT) continue;
+      consider(equipment, slotIndex, equipment.getSlotItem(slotIndex));
+    }
+
+    getOpenContainers().forEach((container) => {
+      (container?.slots || []).forEach((slot, slotIndex) => {
+        consider(container, slotIndex, container.getSlotItem(slotIndex));
+      });
+    });
+
+    return best;
+  }
+
+  function findEmptyContainerSlot() {
+    for (const container of getOpenContainers()) {
+      const slots = container?.slots || [];
+      for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+        const item = container.getSlotItem?.(slotIndex);
+        if (!item) return { container, slotIndex };
+      }
+    }
+    return null;
+  }
+
+  function getGateStatus(now = Date.now()) {
+    const equipment = getEquipment();
+    const equippedAmulet = getEquippedAmulet();
+    const source = findBestAmuletSource();
+    const cooldownRemainingMs = Math.max(0, config.equipCooldownMs - (now - state.lastEquipAt));
+    const wrongAmuletEquipped = !!equippedAmulet && !matchesDesiredAmulet(equippedAmulet);
+    const emptyBackpackSlot = wrongAmuletEquipped && config.autoSwap ? findEmptyContainerSlot() : null;
+    const canSwap = wrongAmuletEquipped && config.autoSwap && !!emptyBackpackSlot;
+
+    return {
+      hasEquipment: !!equipment,
+      hasAmuletEquipped: !!equippedAmulet,
+      wrongAmuletEquipped,
+      hasAmuletAvailable: !!source,
+      cooldownReady: cooldownRemainingMs === 0,
+      cooldownRemainingMs,
+      source,
+      canEquip:
+        !!equipment &&
+        !!source &&
+        cooldownRemainingMs === 0 &&
+        (!equippedAmulet || canSwap),
+      canSwap,
+    };
+  }
+
+  function canEquipAmulet(now = Date.now()) {
+    return getGateStatus(now).canEquip;
+  }
+
+  function tryEquipAmulet(now = Date.now()) {
+    if (!config.enabled) return false;
+    const cooldownRemainingMs = Math.max(0, config.equipCooldownMs - (now - state.lastEquipAt));
+    if (cooldownRemainingMs > 0) return false;
+
+    const equipment = getEquipment();
+    if (!equipment) return false;
+
+    const equippedAmulet = getEquippedAmulet();
+
+    if (equippedAmulet) {
+      if (matchesDesiredAmulet(equippedAmulet)) return false;
+      if (!config.autoSwap) return false;
+
+      const emptyBackpackSlot = findEmptyContainerSlot();
+      if (!emptyBackpackSlot) {
+        bot.log("equip amulet: cannot swap, no empty backpack slot");
+        return false;
+      }
+
+      const amuletCount = (typeof equippedAmulet.getCount === "function" ? equippedAmulet.getCount() : equippedAmulet.count) || 1;
+      window.gameClient.send(new ItemMovePacket(
+        { which: equipment, index: NECKLACE_SLOT },
+        { which: emptyBackpackSlot.container, index: emptyBackpackSlot.slotIndex },
+        amuletCount
+      ));
+      state.lastEquipAt = now;
+      bot.log("equip amulet: unequipped wrong amulet", {
+        name: getItemName(equippedAmulet),
+        toContainerId: emptyBackpackSlot.container?.__containerId ?? null,
+        toSlot: emptyBackpackSlot.slotIndex,
+      });
+      return true;
+    }
+
+    const source = findBestAmuletSource();
+    if (!source) return false;
+
+    window.gameClient.send(new ItemMovePacket(
+      { which: source.container, index: source.slotIndex },
+      { which: equipment, index: NECKLACE_SLOT },
+      source.count || 1
+    ));
+    state.lastEquipAt = now;
+    bot.log("equipped amulet", {
+      name: source.name,
+      fromContainerId: source.container?.__containerId ?? null,
+      fromSlot: source.slotIndex,
+    });
+    return true;
+  }
+
+  function scheduleNextTick() {
+    if (!state.running) return;
+    state.timerId = window.setTimeout(() => tick(), config.tickMs);
+  }
+
+  function runImmediateTick() {
+    if (!state.running) return;
+    if (state.timerId != null) {
+      window.clearTimeout(state.timerId);
+      state.timerId = null;
+    }
+    tick();
+  }
+
+  function handleResume() {
+    if (document.hidden) return;
+    runImmediateTick();
+  }
+
+  function attachResumeListeners() {
+    if (resumeListenersAttached) return;
+    document.addEventListener("visibilitychange", handleResume);
+    window.addEventListener("focus", handleResume);
+    window.addEventListener("pageshow", handleResume);
+    resumeListenersAttached = true;
+  }
+
+  function detachResumeListeners() {
+    if (!resumeListenersAttached) return;
+    document.removeEventListener("visibilitychange", handleResume);
+    window.removeEventListener("focus", handleResume);
+    window.removeEventListener("pageshow", handleResume);
+    resumeListenersAttached = false;
+  }
+
+  function tick() {
+    if (!state.running) return;
+    try {
+      tryEquipAmulet();
+    } catch (error) {
+      bot.log("equip amulet tick failed", error?.message || error);
+    } finally {
+      scheduleNextTick();
+    }
+  }
+
+  function start(overrides = {}) {
+    Object.assign(config, overrides, { enabled: true });
+    config.tickMs = 1000;
+    persistConfig();
+    if (state.running) {
+      bot.log("equip amulet already running");
+      return false;
+    }
+    state.running = true;
+    attachResumeListeners();
+    bot.log("equip amulet started", { ...config });
+    tick();
+    return true;
+  }
+
+  function stop(options = {}) {
+    const shouldPersistEnabled = options.persistEnabled !== false;
+    state.running = false;
+    if (state.timerId != null) {
+      window.clearTimeout(state.timerId);
+      state.timerId = null;
+    }
+    detachResumeListeners();
+    if (shouldPersistEnabled) {
+      config.enabled = false;
+      persistConfig();
+    }
+    bot.log("equip amulet stopped");
+    return true;
+  }
+
+  function status() {
+    return {
+      running: state.running,
+      config: { ...config },
+      gates: getGateStatus(),
+      equippedAmulet: getEquippedAmulet(),
+      lastEquipAt: state.lastEquipAt,
+    };
+  }
+
+  function updateConfig(nextConfig = {}) {
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "amuletName")) {
+      nextConfig.amuletName = String(nextConfig.amuletName || "").trim();
+    }
+    Object.assign(config, nextConfig);
+    config.tickMs = 1000;
+    persistConfig();
+    bot.log("equip amulet config updated", { ...config });
+    return { ...config };
+  }
+
+  if (config.enabled) {
+    start();
+  }
+
+  bot.equipAmulet = {
+    start,
+    stop,
+    status,
+    updateConfig,
+    config,
+    getEquippedAmulet,
+    hasEquippedAmulet,
+    findBestAmuletSource,
+    getGateStatus,
+    canEquipAmulet,
+    tryEquipAmulet,
   };
 };
 window.__minibiaCopilotBundle = window.__minibiaCopilotBundle || {};
@@ -8045,6 +8417,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     { key: "invisible",   label: "Invis",  getRunning: () => !!bot.invisible?.status?.().running },
     { key: "shield",      label: "Shield", getRunning: () => !!bot.magicShield?.status?.().running },
     { key: "ring",        label: "Ring",   getRunning: () => !!bot.equipRing?.status?.().running },
+    { key: "amulet",      label: "Amulet", getRunning: () => !!bot.equipAmulet?.status?.().running },
     { key: "cave",        label: "Cave",   getRunning: () => !!bot.cave?.status?.().running },
     { key: "talk",        label: "Talk",   getRunning: () => !!bot.talk?.status?.().running },
     { key: "mw",          label: "MW",     getRunning: () => !!bot.magicWall?.status?.().running },
@@ -9106,7 +9479,47 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                 <span class="mc-field-label">Custom (overrides dropdown)</span>
                 <input type="text" id="minibia-copilot-equip-ring-custom" placeholder="e.g. might ring" />
               </label>
-              <div class="mc-small-note">Only re-equips when the ring slot is empty. If the wrong ring is equipped, unequip it once and the bot will put the chosen ring on.</div>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-equip-ring-autoswap" />
+                <span>Auto-swap wrong ring to backpack</span>
+              </label>
+              <div class="mc-small-note">Auto-swap moves any non-matching ring to the first empty backpack slot, then equips the chosen ring on the next tick.</div>
+            </div>
+          </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Equip Amulet</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-equip-amulet-enabled" />
+                <span>Keep amulet equipped</span>
+              </label>
+              <label class="mc-field" for="minibia-copilot-equip-amulet-type">
+                <span class="mc-field-label">Amulet type</span>
+                <select id="minibia-copilot-equip-amulet-type">
+                  <option value="">Any amulet</option>
+                  <option value="stone skin amulet">Stone Skin Amulet</option>
+                  <option value="amulet of loss">Amulet of Loss</option>
+                  <option value="sacred tree amulet">Sacred Tree Amulet</option>
+                  <option value="dragon necklace">Dragon Necklace</option>
+                  <option value="elven amulet">Elven Amulet</option>
+                  <option value="garlic necklace">Garlic Necklace</option>
+                  <option value="protection amulet">Protection Amulet</option>
+                  <option value="strange talisman">Strange Talisman</option>
+                  <option value="silver amulet">Silver Amulet</option>
+                  <option value="bronze amulet">Bronze Amulet</option>
+                  <option value="scarab amulet">Scarab Amulet</option>
+                </select>
+              </label>
+              <label class="mc-field" for="minibia-copilot-equip-amulet-custom">
+                <span class="mc-field-label">Custom (overrides dropdown)</span>
+                <input type="text" id="minibia-copilot-equip-amulet-custom" placeholder="e.g. might necklace" />
+              </label>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-equip-amulet-autoswap" />
+                <span>Auto-swap wrong amulet to backpack</span>
+              </label>
+              <div class="mc-small-note">Defaults to Stone Skin Amulet. Auto-swap requires at least one empty backpack slot.</div>
             </div>
           </div>
 
@@ -9279,6 +9692,11 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const equipRingEnabledInput = panel.querySelector("#minibia-copilot-equip-ring-enabled");
     const equipRingTypeSelect = panel.querySelector("#minibia-copilot-equip-ring-type");
     const equipRingCustomInput = panel.querySelector("#minibia-copilot-equip-ring-custom");
+    const equipRingAutoSwapInput = panel.querySelector("#minibia-copilot-equip-ring-autoswap");
+    const equipAmuletEnabledInput = panel.querySelector("#minibia-copilot-equip-amulet-enabled");
+    const equipAmuletTypeSelect = panel.querySelector("#minibia-copilot-equip-amulet-type");
+    const equipAmuletCustomInput = panel.querySelector("#minibia-copilot-equip-amulet-custom");
+    const equipAmuletAutoSwapInput = panel.querySelector("#minibia-copilot-equip-amulet-autoswap");
     const autoHealEnabledInput = panel.querySelector("#minibia-copilot-auto-heal-enabled");
     const autoHealMinHpInput = panel.querySelector("#minibia-copilot-auto-heal-min-hp");
     const autoHealHpHotkeyInput = panel.querySelector("#minibia-copilot-auto-heal-hp-hotkey");
@@ -9532,6 +9950,56 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     }
     if (equipRingCustomInput) {
       equipRingCustomInput.addEventListener("change", applyRingName);
+    }
+
+    if (equipRingAutoSwapInput) {
+      equipRingAutoSwapInput.checked = !!bot.equipRing?.config?.autoSwap;
+      equipRingAutoSwapInput.addEventListener("change", () => {
+        bot.equipRing?.updateConfig?.({ autoSwap: equipRingAutoSwapInput.checked });
+      });
+    }
+
+    if (equipAmuletEnabledInput) {
+      equipAmuletEnabledInput.checked = !!bot.equipAmulet?.status?.().running;
+      equipAmuletEnabledInput.addEventListener("change", () => {
+        if (equipAmuletEnabledInput.checked) {
+          bot.equipAmulet?.start?.();
+        } else {
+          bot.equipAmulet?.stop?.();
+        }
+      });
+    }
+
+    const initialAmuletName = String(bot.equipAmulet?.config?.amuletName || "").trim();
+    const amuletPresetValues = equipAmuletTypeSelect
+      ? Array.from(equipAmuletTypeSelect.options).map((option) => option.value)
+      : [];
+    const initialAmuletIsPreset = amuletPresetValues.includes(initialAmuletName.toLowerCase());
+    if (equipAmuletTypeSelect) {
+      equipAmuletTypeSelect.value = initialAmuletIsPreset ? initialAmuletName.toLowerCase() : "";
+    }
+    if (equipAmuletCustomInput) {
+      equipAmuletCustomInput.value = initialAmuletIsPreset ? "" : initialAmuletName;
+    }
+
+    function applyAmuletName() {
+      const custom = equipAmuletCustomInput?.value?.trim() || "";
+      const preset = equipAmuletTypeSelect?.value?.trim() || "";
+      bot.equipAmulet?.updateConfig?.({ amuletName: custom || preset });
+    }
+
+    if (equipAmuletTypeSelect) {
+      equipAmuletTypeSelect.addEventListener("change", applyAmuletName);
+    }
+    if (equipAmuletCustomInput) {
+      equipAmuletCustomInput.addEventListener("change", applyAmuletName);
+    }
+
+    if (equipAmuletAutoSwapInput) {
+      equipAmuletAutoSwapInput.checked = !!bot.equipAmulet?.config?.autoSwap;
+      equipAmuletAutoSwapInput.addEventListener("change", () => {
+        bot.equipAmulet?.updateConfig?.({ autoSwap: equipAmuletAutoSwapInput.checked });
+      });
     }
 
     if (caveRecordButton) {
@@ -10082,6 +10550,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     ["attack", "minibiaCopilot.attack.config"],
     ["cave", "minibiaCopilot.cave.config"],
     ["equipRing", "minibiaCopilot.equipRing.config"],
+    ["equipAmulet", "minibiaCopilot.equipAmulet.config"],
     ["eat", "minibiaCopilot.eat.config"],
     ["talk", "minibiaCopilot.talk.config"],
     ["magicWall", "minibiaCopilot.magicWall.config"],
@@ -10148,6 +10617,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     currentBundle.installAutoAttackModule(bot);
     currentBundle.installCaveModule(bot);
     currentBundle.installEquipRingModule(bot);
+    currentBundle.installEquipAmuletModule(bot);
     currentBundle.installAutoEatModule(bot);
     currentBundle.installTalkModule(bot);
     currentBundle.installMagicWallModule(bot);
@@ -10173,6 +10643,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       attack: bot.attack.status(),
       cave: bot.cave.status(),
       equipRing: bot.equipRing.status(),
+      equipAmulet: bot.equipAmulet.status(),
       eat: bot.eat.status(),
       talk: bot.talk.status(),
       magicWall: bot.magicWall.status(),
@@ -10185,7 +10656,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
     console.log("[minibia-copilot] ready", {
       version: bot.version,
-      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "eat", "talk", "magicWall", "hunt", "ui"],
+      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "equipAmulet", "eat", "talk", "magicWall", "hunt", "ui"],
     });
     console.log("minibiaCopilot.reload()");
     console.log("minibiaCopilot.xray.status()");

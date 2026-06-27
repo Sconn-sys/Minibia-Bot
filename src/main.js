@@ -36,6 +36,7 @@
     ["attack", "minibiaCopilot.attack.config"],
     ["cave", "minibiaCopilot.cave.config"],
     ["equipRing", "minibiaCopilot.equipRing.config"],
+    ["equipAmulet", "minibiaCopilot.equipAmulet.config"],
     ["eat", "minibiaCopilot.eat.config"],
     ["talk", "minibiaCopilot.talk.config"],
     ["magicWall", "minibiaCopilot.magicWall.config"],
@@ -102,6 +103,7 @@
     currentBundle.installAutoAttackModule(bot);
     currentBundle.installCaveModule(bot);
     currentBundle.installEquipRingModule(bot);
+    currentBundle.installEquipAmuletModule(bot);
     currentBundle.installAutoEatModule(bot);
     currentBundle.installTalkModule(bot);
     currentBundle.installMagicWallModule(bot);
@@ -127,6 +129,7 @@
       attack: bot.attack.status(),
       cave: bot.cave.status(),
       equipRing: bot.equipRing.status(),
+      equipAmulet: bot.equipAmulet.status(),
       eat: bot.eat.status(),
       talk: bot.talk.status(),
       magicWall: bot.magicWall.status(),
@@ -139,7 +142,7 @@
 
     console.log("[minibia-copilot] ready", {
       version: bot.version,
-      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "eat", "talk", "magicWall", "hunt", "ui"],
+      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "equipAmulet", "eat", "talk", "magicWall", "hunt", "ui"],
     });
     console.log("minibiaCopilot.reload()");
     console.log("minibiaCopilot.xray.status()");

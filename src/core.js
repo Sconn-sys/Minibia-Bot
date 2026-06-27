@@ -297,6 +297,10 @@ window.__minibiaCopilotBundle.createBot = function createBot() {
         this.equipRing.stop({ persistEnabled: false });
       }
 
+      if (this.equipAmulet?.stop) {
+        this.equipAmulet.stop({ persistEnabled: false });
+      }
+
       if (this.eat?.stop) {
         this.eat.stop({ persistEnabled: false });
       }
