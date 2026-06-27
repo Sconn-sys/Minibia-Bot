@@ -8137,9 +8137,13 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     config.characterPageUrlTemplate = "/character.html?name={name}";
   }
 
-  let trackedNames = normalizeTrackedNames(bot.storage.get(trackedStorageKey, []));
-  let recentDeaths = normalizeDeathRecords(bot.storage.get(deathsStorageKey, []));
-  let seenDeathKeys = new Set(bot.storage.get(seenDeathsStorageKey, []) || []);
+  const validCategories = new Set(["enemy", "friendly"]);
+  const defaultCategory = "enemy";
+
+  function normalizeCategory(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    return validCategories.has(raw) ? raw : defaultCategory;
+  }
 
   function normalizeName(value) {
     return String(value || "").trim();
@@ -8153,11 +8157,36 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     const list = Array.isArray(value) ? value : [];
     const dedup = new Map();
     list.forEach((entry) => {
-      const name = normalizeName(entry);
+      if (entry == null) return;
+      let name;
+      let category;
+      if (typeof entry === "string") {
+        name = normalizeName(entry);
+        category = defaultCategory;
+      } else if (typeof entry === "object") {
+        name = normalizeName(entry.name);
+        category = normalizeCategory(entry.category);
+      } else {
+        return;
+      }
       const key = normalizeKey(name);
-      if (key) dedup.set(key, name);
+      if (key) dedup.set(key, { name, category });
     });
     return Array.from(dedup.values());
+  }
+
+  let trackedPlayers = normalizeTrackedNames(bot.storage.get(trackedStorageKey, []));
+  let recentDeaths = normalizeDeathRecords(bot.storage.get(deathsStorageKey, []));
+  let seenDeathKeys = new Set(bot.storage.get(seenDeathsStorageKey, []) || []);
+
+  function getPlayerCategory(name) {
+    const key = normalizeKey(name);
+    const found = trackedPlayers.find((p) => normalizeKey(p.name) === key);
+    return found?.category || defaultCategory;
+  }
+
+  function getTrackedNamesArray() {
+    return trackedPlayers.map((p) => p.name);
   }
 
   function normalizeDeathRecords(value) {
@@ -8183,7 +8212,7 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     bot.storage.set(configStorageKey, { ...config });
   }
   function persistTracked() {
-    bot.storage.set(trackedStorageKey, trackedNames);
+    bot.storage.set(trackedStorageKey, trackedPlayers);
   }
   function persistDeaths() {
     bot.storage.set(deathsStorageKey, recentDeaths);
@@ -8474,13 +8503,16 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       state.lastOnlineSet = onlineKeys;
 
       if (!isFirstPoll) {
-        for (const trackedName of trackedNames) {
+        for (const trackedPlayer of trackedPlayers) {
+          const trackedName = trackedPlayer.name;
           const key = normalizeKey(trackedName);
           const wasOnline = previousOnlineKeys.has(key);
           const isOnlineNow = onlineKeys.has(key);
           if (!wasOnline && isOnlineNow) {
-            try { bot.ui?.showTrackerNotification?.("login", trackedName); } catch (error) {}
-            bot.log("tracker: login observed", { name: trackedName });
+            try {
+              bot.ui?.showTrackerNotification?.("login", trackedName, { category: trackedPlayer.category });
+            } catch (error) {}
+            bot.log("tracker: login observed", { name: trackedName, category: trackedPlayer.category });
           }
         }
       }
@@ -8489,7 +8521,8 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       let appended = 0;
       const newDeathsForNotifications = [];
 
-      for (const trackedName of trackedNames) {
+      for (const trackedPlayer of trackedPlayers) {
+        const trackedName = trackedPlayer.name;
         const deaths = await fetchCharacterDeaths(trackedName);
         for (const death of deaths) {
           if (death.at < cutoff) continue;
@@ -8514,7 +8547,10 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       }
 
       newDeathsForNotifications.forEach((death) => {
-        try { bot.ui?.showTrackerNotification?.("death", death.name, death); } catch (error) {}
+        const category = getPlayerCategory(death.name);
+        try {
+          bot.ui?.showTrackerNotification?.("death", death.name, { ...death, category });
+        } catch (error) {}
       });
 
       state.lastPollAt = now;
@@ -8577,7 +8613,7 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     bot.log("tracker started", {
       pollIntervalMs: config.pollIntervalMs,
       retentionMs: config.retentionMs,
-      tracked: trackedNames.length,
+      tracked: trackedPlayers.length,
     });
     return true;
   }
@@ -8595,50 +8631,78 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     return true;
   }
 
-  function addTracked(name) {
+  function addTracked(name, category) {
     const normalized = normalizeName(name);
     if (!normalized) return null;
     const key = normalizeKey(normalized);
-    if (trackedNames.some((n) => normalizeKey(n) === key)) return null;
-    trackedNames.push(normalized);
+    const cat = normalizeCategory(category);
+    if (trackedPlayers.some((p) => normalizeKey(p.name) === key)) return null;
+    trackedPlayers.push({ name: normalized, category: cat });
     persistTracked();
-    bot.log("tracker: added", { name: normalized });
+    bot.log("tracker: added", { name: normalized, category: cat });
     if (state.running) pollOnce().catch(() => {});
     try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
-    return normalized;
+    return { name: normalized, category: cat };
   }
 
   function removeTracked(name) {
     const key = normalizeKey(name);
-    const before = trackedNames.length;
-    trackedNames = trackedNames.filter((n) => normalizeKey(n) !== key);
-    if (before === trackedNames.length) return false;
+    const before = trackedPlayers.length;
+    trackedPlayers = trackedPlayers.filter((p) => normalizeKey(p.name) !== key);
+    if (before === trackedPlayers.length) return false;
     persistTracked();
     bot.log("tracker: removed", { name });
     try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
     return true;
   }
 
-  function getTrackedNames() {
-    return trackedNames.slice();
+  function setCategory(name, category) {
+    const key = normalizeKey(name);
+    const cat = normalizeCategory(category);
+    const found = trackedPlayers.find((p) => normalizeKey(p.name) === key);
+    if (!found) return false;
+    if (found.category === cat) return true;
+    found.category = cat;
+    persistTracked();
+    bot.log("tracker: category changed", { name: found.name, category: cat });
+    try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
+    return true;
+  }
+
+  function getTrackedNames(category) {
+    if (!category) return getTrackedNamesArray();
+    const cat = normalizeCategory(category);
+    return trackedPlayers.filter((p) => p.category === cat).map((p) => p.name);
   }
 
   function isOnline(name) {
     return state.lastOnlineSet.has(normalizeKey(name));
   }
 
-  function getRecentDeaths(now = Date.now()) {
+  function getRecentDeaths(category, now = Date.now()) {
     expireOldDeaths(now);
-    return recentDeaths.slice().sort((a, b) => b.at - a.at);
+    if (!category) return recentDeaths.slice().sort((a, b) => b.at - a.at);
+    const cat = normalizeCategory(category);
+    return recentDeaths
+      .filter((d) => getPlayerCategory(d.name) === cat)
+      .sort((a, b) => b.at - a.at);
   }
 
   function status() {
+    const allNames = getTrackedNamesArray();
+    const enemyNames = trackedPlayers.filter((p) => p.category === "enemy").map((p) => p.name);
+    const friendlyNames = trackedPlayers.filter((p) => p.category === "friendly").map((p) => p.name);
     return {
       running: state.running,
       config: { ...config },
-      tracked: trackedNames.slice(),
-      online: trackedNames.filter((n) => isOnline(n)),
-      offline: trackedNames.filter((n) => !isOnline(n)),
+      tracked: allNames,
+      trackedPlayers: trackedPlayers.map((p) => ({ ...p })),
+      enemy: enemyNames,
+      friendly: friendlyNames,
+      online: allNames.filter((n) => isOnline(n)),
+      offline: allNames.filter((n) => !isOnline(n)),
+      enemyDeaths: getRecentDeaths("enemy"),
+      friendlyDeaths: getRecentDeaths("friendly"),
       recentDeaths: getRecentDeaths(),
       lastPollAt: state.lastPollAt,
       lastError: state.lastError,
@@ -8724,7 +8788,10 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     updateConfig,
     addTracked,
     removeTracked,
+    setCategory,
     getTrackedNames,
+    getTrackedPlayers: () => trackedPlayers.map((p) => ({ ...p })),
+    getPlayerCategory,
     isOnline,
     getRecentDeaths,
     pollOnce: () => pollOnce(),
@@ -9434,6 +9501,20 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     return Math.round(diff / 3600000) + "h ago";
   }
 
+  const trackerSubtabStorageKey = "minibiaCopilot.ui.trackerSubtab";
+  let activeTrackerSubtab = String(bot.storage.get(trackerSubtabStorageKey, "enemy") || "enemy");
+  if (activeTrackerSubtab !== "enemy" && activeTrackerSubtab !== "friendly") {
+    activeTrackerSubtab = "enemy";
+  }
+
+  function setTrackerSubtab(name) {
+    const next = name === "friendly" ? "friendly" : "enemy";
+    if (next === activeTrackerSubtab) return;
+    activeTrackerSubtab = next;
+    try { bot.storage.set(trackerSubtabStorageKey, next); } catch (error) {}
+    refreshTrackerStatus();
+  }
+
   function refreshTrackerStatus() {
     const status = bot.tracker?.status?.();
     if (!status) return;
@@ -9442,7 +9523,16 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const intervalInput = document.getElementById("minibia-copilot-tracker-interval");
     const statusLabel = document.getElementById("minibia-copilot-tracker-status");
     const list = document.getElementById("minibia-copilot-tracker-list");
+    const listLabel = document.getElementById("minibia-copilot-tracker-list-label");
+    const deathsLabel = document.getElementById("minibia-copilot-tracker-deaths-label");
     const deathsList = document.getElementById("minibia-copilot-tracker-deaths");
+    const subtabsHost = document.getElementById("minibia-copilot-tracker-subtabs");
+
+    if (subtabsHost) {
+      subtabsHost.querySelectorAll(".mc-subtab-button").forEach((button) => {
+        button.dataset.active = (button.dataset.subtab === activeTrackerSubtab) ? "true" : "false";
+      });
+    }
 
     if (enabledInput && document.activeElement !== enabledInput) {
       enabledInput.checked = !!status.running;
@@ -9464,11 +9554,25 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       }
     }
 
+    const isEnemyTab = activeTrackerSubtab === "enemy";
+    const sectionNames = isEnemyTab ? (status.enemy || []) : (status.friendly || []);
+    const sectionDeaths = isEnemyTab ? (status.enemyDeaths || []) : (status.friendlyDeaths || []);
+    const oppositeCategoryLabel = isEnemyTab ? "Friendly" : "Enemy";
+
+    if (listLabel) {
+      listLabel.textContent = isEnemyTab ? "Tracked Enemies" : "Tracked Friendlies";
+    }
+    if (deathsLabel) {
+      deathsLabel.textContent = isEnemyTab
+        ? "Recent Enemy Deaths (last 30 min)"
+        : "Recent Friendly Deaths (last 30 min)";
+    }
+
     if (list) {
-      if (!status.tracked.length) {
-        list.innerHTML = '<div class="mc-small-note">No tracked players yet. Add a name above.</div>';
+      if (!sectionNames.length) {
+        list.innerHTML = `<div class="mc-small-note">No ${isEnemyTab ? "enemies" : "friendlies"} tracked yet. Add a name above.</div>`;
       } else {
-        list.innerHTML = status.tracked.map((name) => {
+        list.innerHTML = sectionNames.map((name) => {
           const online = status.online.includes(name);
           return (
             `<div class="mc-tracked-row" data-name="${escapeHtml(name)}">` +
@@ -9476,7 +9580,10 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                 `<span class="mc-tracked-dot" data-online="${online ? "true" : "false"}"></span>` +
                 `<span>${escapeHtml(name)}</span>` +
               `</span>` +
-              `<button type="button" class="mc-small-button" data-tracker-remove="${escapeHtml(name)}">✕</button>` +
+              `<span class="mc-tracked-actions">` +
+                `<button type="button" class="mc-small-button" data-tracker-swap="${escapeHtml(name)}" title="Move to ${oppositeCategoryLabel}">⇄</button>` +
+                `<button type="button" class="mc-small-button" data-tracker-remove="${escapeHtml(name)}" title="Remove">✕</button>` +
+              `</span>` +
             `</div>`
           );
         }).join("");
@@ -9484,11 +9591,10 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     }
 
     if (deathsList) {
-      const deaths = status.recentDeaths || [];
-      if (!deaths.length) {
-        deathsList.innerHTML = '<div class="mc-death-row-empty">No deaths recorded in the last 30 minutes.</div>';
+      if (!sectionDeaths.length) {
+        deathsList.innerHTML = `<div class="mc-death-row-empty">No ${isEnemyTab ? "enemy" : "friendly"} deaths in the last 30 minutes.</div>`;
       } else {
-        deathsList.innerHTML = deaths.map((death) => {
+        deathsList.innerHTML = sectionDeaths.map((death) => {
           const when = new Date(death.at);
           const time = when.toTimeString().slice(0, 5);
           const rel = formatRelativeTime(death.at);
@@ -10175,6 +10281,47 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         line-height: 1.3;
       }
 
+      #minibia-copilot-panel .mc-subtabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: -4px;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button {
+        flex: 1;
+        width: auto;
+        padding: 6px 8px;
+        border: 1px solid rgba(224, 200, 148, 0.2);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.25);
+        color: #8c7a52;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button:hover {
+        color: #f1e2b8;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button[data-active="true"] {
+        color: #ffcf5a;
+        border-color: rgba(255, 207, 90, 0.45);
+        background: rgba(255, 207, 90, 0.1);
+      }
+
+      #minibia-copilot-panel .mc-tracked-actions {
+        display: flex;
+        gap: 4px;
+      }
+
+      #minibia-copilot-panel .mc-tracked-actions .mc-small-button {
+        padding: 3px 7px;
+        font-size: 11px;
+      }
+
       #minibia-copilot-tracker-toasts {
         position: fixed;
         z-index: 2147483645;
@@ -10858,8 +11005,13 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             </div>
           </div>
 
+          <div class="mc-subtabs" id="minibia-copilot-tracker-subtabs">
+            <button type="button" class="mc-subtab-button" data-subtab="enemy">⚔ Enemy</button>
+            <button type="button" class="mc-subtab-button" data-subtab="friendly">🛡 Friendly</button>
+          </div>
+
           <div class="mc-section">
-            <div class="mc-label">Tracked Players</div>
+            <div class="mc-label" id="minibia-copilot-tracker-list-label">Tracked Enemies</div>
             <div class="mc-stack">
               <div class="mc-inline">
                 <input type="text" id="minibia-copilot-tracker-add-input" placeholder="Character name" />
@@ -10870,7 +11022,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
           </div>
 
           <div class="mc-section">
-            <div class="mc-label">Recent Deaths (last 30 min)</div>
+            <div class="mc-label" id="minibia-copilot-tracker-deaths-label">Recent Enemy Deaths (last 30 min)</div>
             <div class="mc-stack">
               <div class="mc-list" id="minibia-copilot-tracker-deaths"></div>
               <div class="mc-actions mc-actions-inline-two">
@@ -11263,7 +11415,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     function addTrackedFromInput() {
       const name = trackerAddInput?.value?.trim() || "";
       if (!name) return;
-      bot.tracker?.addTracked?.(name);
+      bot.tracker?.addTracked?.(name, activeTrackerSubtab);
       if (trackerAddInput) trackerAddInput.value = "";
       refreshTrackerStatus();
     }
@@ -11282,12 +11434,33 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
     if (trackerList) {
       trackerList.addEventListener("click", (event) => {
-        const target = event.target.closest("[data-tracker-remove]");
-        if (!target) return;
-        const name = target.getAttribute("data-tracker-remove");
-        if (!name) return;
-        bot.tracker?.removeTracked?.(name);
-        refreshTrackerStatus();
+        const removeTarget = event.target.closest("[data-tracker-remove]");
+        if (removeTarget) {
+          const name = removeTarget.getAttribute("data-tracker-remove");
+          if (name) {
+            bot.tracker?.removeTracked?.(name);
+            refreshTrackerStatus();
+          }
+          return;
+        }
+        const swapTarget = event.target.closest("[data-tracker-swap]");
+        if (swapTarget) {
+          const name = swapTarget.getAttribute("data-tracker-swap");
+          if (name) {
+            const current = bot.tracker?.getPlayerCategory?.(name) || "enemy";
+            const next = current === "enemy" ? "friendly" : "enemy";
+            bot.tracker?.setCategory?.(name, next);
+            refreshTrackerStatus();
+          }
+          return;
+        }
+      });
+    }
+
+    const trackerSubtabsHost = panel.querySelector("#minibia-copilot-tracker-subtabs");
+    if (trackerSubtabsHost) {
+      trackerSubtabsHost.querySelectorAll(".mc-subtab-button").forEach((button) => {
+        button.addEventListener("click", () => setTrackerSubtab(button.dataset.subtab));
       });
     }
 

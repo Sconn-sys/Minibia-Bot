@@ -524,6 +524,20 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     return Math.round(diff / 3600000) + "h ago";
   }
 
+  const trackerSubtabStorageKey = "minibiaCopilot.ui.trackerSubtab";
+  let activeTrackerSubtab = String(bot.storage.get(trackerSubtabStorageKey, "enemy") || "enemy");
+  if (activeTrackerSubtab !== "enemy" && activeTrackerSubtab !== "friendly") {
+    activeTrackerSubtab = "enemy";
+  }
+
+  function setTrackerSubtab(name) {
+    const next = name === "friendly" ? "friendly" : "enemy";
+    if (next === activeTrackerSubtab) return;
+    activeTrackerSubtab = next;
+    try { bot.storage.set(trackerSubtabStorageKey, next); } catch (error) {}
+    refreshTrackerStatus();
+  }
+
   function refreshTrackerStatus() {
     const status = bot.tracker?.status?.();
     if (!status) return;
@@ -532,7 +546,16 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const intervalInput = document.getElementById("minibia-copilot-tracker-interval");
     const statusLabel = document.getElementById("minibia-copilot-tracker-status");
     const list = document.getElementById("minibia-copilot-tracker-list");
+    const listLabel = document.getElementById("minibia-copilot-tracker-list-label");
+    const deathsLabel = document.getElementById("minibia-copilot-tracker-deaths-label");
     const deathsList = document.getElementById("minibia-copilot-tracker-deaths");
+    const subtabsHost = document.getElementById("minibia-copilot-tracker-subtabs");
+
+    if (subtabsHost) {
+      subtabsHost.querySelectorAll(".mc-subtab-button").forEach((button) => {
+        button.dataset.active = (button.dataset.subtab === activeTrackerSubtab) ? "true" : "false";
+      });
+    }
 
     if (enabledInput && document.activeElement !== enabledInput) {
       enabledInput.checked = !!status.running;
@@ -554,11 +577,25 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       }
     }
 
+    const isEnemyTab = activeTrackerSubtab === "enemy";
+    const sectionNames = isEnemyTab ? (status.enemy || []) : (status.friendly || []);
+    const sectionDeaths = isEnemyTab ? (status.enemyDeaths || []) : (status.friendlyDeaths || []);
+    const oppositeCategoryLabel = isEnemyTab ? "Friendly" : "Enemy";
+
+    if (listLabel) {
+      listLabel.textContent = isEnemyTab ? "Tracked Enemies" : "Tracked Friendlies";
+    }
+    if (deathsLabel) {
+      deathsLabel.textContent = isEnemyTab
+        ? "Recent Enemy Deaths (last 30 min)"
+        : "Recent Friendly Deaths (last 30 min)";
+    }
+
     if (list) {
-      if (!status.tracked.length) {
-        list.innerHTML = '<div class="mc-small-note">No tracked players yet. Add a name above.</div>';
+      if (!sectionNames.length) {
+        list.innerHTML = `<div class="mc-small-note">No ${isEnemyTab ? "enemies" : "friendlies"} tracked yet. Add a name above.</div>`;
       } else {
-        list.innerHTML = status.tracked.map((name) => {
+        list.innerHTML = sectionNames.map((name) => {
           const online = status.online.includes(name);
           return (
             `<div class="mc-tracked-row" data-name="${escapeHtml(name)}">` +
@@ -566,7 +603,10 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                 `<span class="mc-tracked-dot" data-online="${online ? "true" : "false"}"></span>` +
                 `<span>${escapeHtml(name)}</span>` +
               `</span>` +
-              `<button type="button" class="mc-small-button" data-tracker-remove="${escapeHtml(name)}">✕</button>` +
+              `<span class="mc-tracked-actions">` +
+                `<button type="button" class="mc-small-button" data-tracker-swap="${escapeHtml(name)}" title="Move to ${oppositeCategoryLabel}">⇄</button>` +
+                `<button type="button" class="mc-small-button" data-tracker-remove="${escapeHtml(name)}" title="Remove">✕</button>` +
+              `</span>` +
             `</div>`
           );
         }).join("");
@@ -574,11 +614,10 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     }
 
     if (deathsList) {
-      const deaths = status.recentDeaths || [];
-      if (!deaths.length) {
-        deathsList.innerHTML = '<div class="mc-death-row-empty">No deaths recorded in the last 30 minutes.</div>';
+      if (!sectionDeaths.length) {
+        deathsList.innerHTML = `<div class="mc-death-row-empty">No ${isEnemyTab ? "enemy" : "friendly"} deaths in the last 30 minutes.</div>`;
       } else {
-        deathsList.innerHTML = deaths.map((death) => {
+        deathsList.innerHTML = sectionDeaths.map((death) => {
           const when = new Date(death.at);
           const time = when.toTimeString().slice(0, 5);
           const rel = formatRelativeTime(death.at);
@@ -1265,6 +1304,47 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         line-height: 1.3;
       }
 
+      #minibia-copilot-panel .mc-subtabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: -4px;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button {
+        flex: 1;
+        width: auto;
+        padding: 6px 8px;
+        border: 1px solid rgba(224, 200, 148, 0.2);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.25);
+        color: #8c7a52;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button:hover {
+        color: #f1e2b8;
+      }
+
+      #minibia-copilot-panel .mc-subtab-button[data-active="true"] {
+        color: #ffcf5a;
+        border-color: rgba(255, 207, 90, 0.45);
+        background: rgba(255, 207, 90, 0.1);
+      }
+
+      #minibia-copilot-panel .mc-tracked-actions {
+        display: flex;
+        gap: 4px;
+      }
+
+      #minibia-copilot-panel .mc-tracked-actions .mc-small-button {
+        padding: 3px 7px;
+        font-size: 11px;
+      }
+
       #minibia-copilot-tracker-toasts {
         position: fixed;
         z-index: 2147483645;
@@ -1948,8 +2028,13 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             </div>
           </div>
 
+          <div class="mc-subtabs" id="minibia-copilot-tracker-subtabs">
+            <button type="button" class="mc-subtab-button" data-subtab="enemy">⚔ Enemy</button>
+            <button type="button" class="mc-subtab-button" data-subtab="friendly">🛡 Friendly</button>
+          </div>
+
           <div class="mc-section">
-            <div class="mc-label">Tracked Players</div>
+            <div class="mc-label" id="minibia-copilot-tracker-list-label">Tracked Enemies</div>
             <div class="mc-stack">
               <div class="mc-inline">
                 <input type="text" id="minibia-copilot-tracker-add-input" placeholder="Character name" />
@@ -1960,7 +2045,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
           </div>
 
           <div class="mc-section">
-            <div class="mc-label">Recent Deaths (last 30 min)</div>
+            <div class="mc-label" id="minibia-copilot-tracker-deaths-label">Recent Enemy Deaths (last 30 min)</div>
             <div class="mc-stack">
               <div class="mc-list" id="minibia-copilot-tracker-deaths"></div>
               <div class="mc-actions mc-actions-inline-two">
@@ -2353,7 +2438,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     function addTrackedFromInput() {
       const name = trackerAddInput?.value?.trim() || "";
       if (!name) return;
-      bot.tracker?.addTracked?.(name);
+      bot.tracker?.addTracked?.(name, activeTrackerSubtab);
       if (trackerAddInput) trackerAddInput.value = "";
       refreshTrackerStatus();
     }
@@ -2372,12 +2457,33 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
     if (trackerList) {
       trackerList.addEventListener("click", (event) => {
-        const target = event.target.closest("[data-tracker-remove]");
-        if (!target) return;
-        const name = target.getAttribute("data-tracker-remove");
-        if (!name) return;
-        bot.tracker?.removeTracked?.(name);
-        refreshTrackerStatus();
+        const removeTarget = event.target.closest("[data-tracker-remove]");
+        if (removeTarget) {
+          const name = removeTarget.getAttribute("data-tracker-remove");
+          if (name) {
+            bot.tracker?.removeTracked?.(name);
+            refreshTrackerStatus();
+          }
+          return;
+        }
+        const swapTarget = event.target.closest("[data-tracker-swap]");
+        if (swapTarget) {
+          const name = swapTarget.getAttribute("data-tracker-swap");
+          if (name) {
+            const current = bot.tracker?.getPlayerCategory?.(name) || "enemy";
+            const next = current === "enemy" ? "friendly" : "enemy";
+            bot.tracker?.setCategory?.(name, next);
+            refreshTrackerStatus();
+          }
+          return;
+        }
+      });
+    }
+
+    const trackerSubtabsHost = panel.querySelector("#minibia-copilot-tracker-subtabs");
+    if (trackerSubtabsHost) {
+      trackerSubtabsHost.querySelectorAll(".mc-subtab-button").forEach((button) => {
+        button.addEventListener("click", () => setTrackerSubtab(button.dataset.subtab));
       });
     }
 

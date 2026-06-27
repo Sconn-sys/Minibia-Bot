@@ -38,9 +38,13 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     config.characterPageUrlTemplate = "/character.html?name={name}";
   }
 
-  let trackedNames = normalizeTrackedNames(bot.storage.get(trackedStorageKey, []));
-  let recentDeaths = normalizeDeathRecords(bot.storage.get(deathsStorageKey, []));
-  let seenDeathKeys = new Set(bot.storage.get(seenDeathsStorageKey, []) || []);
+  const validCategories = new Set(["enemy", "friendly"]);
+  const defaultCategory = "enemy";
+
+  function normalizeCategory(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    return validCategories.has(raw) ? raw : defaultCategory;
+  }
 
   function normalizeName(value) {
     return String(value || "").trim();
@@ -54,11 +58,36 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     const list = Array.isArray(value) ? value : [];
     const dedup = new Map();
     list.forEach((entry) => {
-      const name = normalizeName(entry);
+      if (entry == null) return;
+      let name;
+      let category;
+      if (typeof entry === "string") {
+        name = normalizeName(entry);
+        category = defaultCategory;
+      } else if (typeof entry === "object") {
+        name = normalizeName(entry.name);
+        category = normalizeCategory(entry.category);
+      } else {
+        return;
+      }
       const key = normalizeKey(name);
-      if (key) dedup.set(key, name);
+      if (key) dedup.set(key, { name, category });
     });
     return Array.from(dedup.values());
+  }
+
+  let trackedPlayers = normalizeTrackedNames(bot.storage.get(trackedStorageKey, []));
+  let recentDeaths = normalizeDeathRecords(bot.storage.get(deathsStorageKey, []));
+  let seenDeathKeys = new Set(bot.storage.get(seenDeathsStorageKey, []) || []);
+
+  function getPlayerCategory(name) {
+    const key = normalizeKey(name);
+    const found = trackedPlayers.find((p) => normalizeKey(p.name) === key);
+    return found?.category || defaultCategory;
+  }
+
+  function getTrackedNamesArray() {
+    return trackedPlayers.map((p) => p.name);
   }
 
   function normalizeDeathRecords(value) {
@@ -84,7 +113,7 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     bot.storage.set(configStorageKey, { ...config });
   }
   function persistTracked() {
-    bot.storage.set(trackedStorageKey, trackedNames);
+    bot.storage.set(trackedStorageKey, trackedPlayers);
   }
   function persistDeaths() {
     bot.storage.set(deathsStorageKey, recentDeaths);
@@ -375,13 +404,16 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       state.lastOnlineSet = onlineKeys;
 
       if (!isFirstPoll) {
-        for (const trackedName of trackedNames) {
+        for (const trackedPlayer of trackedPlayers) {
+          const trackedName = trackedPlayer.name;
           const key = normalizeKey(trackedName);
           const wasOnline = previousOnlineKeys.has(key);
           const isOnlineNow = onlineKeys.has(key);
           if (!wasOnline && isOnlineNow) {
-            try { bot.ui?.showTrackerNotification?.("login", trackedName); } catch (error) {}
-            bot.log("tracker: login observed", { name: trackedName });
+            try {
+              bot.ui?.showTrackerNotification?.("login", trackedName, { category: trackedPlayer.category });
+            } catch (error) {}
+            bot.log("tracker: login observed", { name: trackedName, category: trackedPlayer.category });
           }
         }
       }
@@ -390,7 +422,8 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       let appended = 0;
       const newDeathsForNotifications = [];
 
-      for (const trackedName of trackedNames) {
+      for (const trackedPlayer of trackedPlayers) {
+        const trackedName = trackedPlayer.name;
         const deaths = await fetchCharacterDeaths(trackedName);
         for (const death of deaths) {
           if (death.at < cutoff) continue;
@@ -415,7 +448,10 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
       }
 
       newDeathsForNotifications.forEach((death) => {
-        try { bot.ui?.showTrackerNotification?.("death", death.name, death); } catch (error) {}
+        const category = getPlayerCategory(death.name);
+        try {
+          bot.ui?.showTrackerNotification?.("death", death.name, { ...death, category });
+        } catch (error) {}
       });
 
       state.lastPollAt = now;
@@ -478,7 +514,7 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     bot.log("tracker started", {
       pollIntervalMs: config.pollIntervalMs,
       retentionMs: config.retentionMs,
-      tracked: trackedNames.length,
+      tracked: trackedPlayers.length,
     });
     return true;
   }
@@ -496,50 +532,78 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     return true;
   }
 
-  function addTracked(name) {
+  function addTracked(name, category) {
     const normalized = normalizeName(name);
     if (!normalized) return null;
     const key = normalizeKey(normalized);
-    if (trackedNames.some((n) => normalizeKey(n) === key)) return null;
-    trackedNames.push(normalized);
+    const cat = normalizeCategory(category);
+    if (trackedPlayers.some((p) => normalizeKey(p.name) === key)) return null;
+    trackedPlayers.push({ name: normalized, category: cat });
     persistTracked();
-    bot.log("tracker: added", { name: normalized });
+    bot.log("tracker: added", { name: normalized, category: cat });
     if (state.running) pollOnce().catch(() => {});
     try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
-    return normalized;
+    return { name: normalized, category: cat };
   }
 
   function removeTracked(name) {
     const key = normalizeKey(name);
-    const before = trackedNames.length;
-    trackedNames = trackedNames.filter((n) => normalizeKey(n) !== key);
-    if (before === trackedNames.length) return false;
+    const before = trackedPlayers.length;
+    trackedPlayers = trackedPlayers.filter((p) => normalizeKey(p.name) !== key);
+    if (before === trackedPlayers.length) return false;
     persistTracked();
     bot.log("tracker: removed", { name });
     try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
     return true;
   }
 
-  function getTrackedNames() {
-    return trackedNames.slice();
+  function setCategory(name, category) {
+    const key = normalizeKey(name);
+    const cat = normalizeCategory(category);
+    const found = trackedPlayers.find((p) => normalizeKey(p.name) === key);
+    if (!found) return false;
+    if (found.category === cat) return true;
+    found.category = cat;
+    persistTracked();
+    bot.log("tracker: category changed", { name: found.name, category: cat });
+    try { bot.ui?.refreshTrackerStatus?.(); } catch (error) {}
+    return true;
+  }
+
+  function getTrackedNames(category) {
+    if (!category) return getTrackedNamesArray();
+    const cat = normalizeCategory(category);
+    return trackedPlayers.filter((p) => p.category === cat).map((p) => p.name);
   }
 
   function isOnline(name) {
     return state.lastOnlineSet.has(normalizeKey(name));
   }
 
-  function getRecentDeaths(now = Date.now()) {
+  function getRecentDeaths(category, now = Date.now()) {
     expireOldDeaths(now);
-    return recentDeaths.slice().sort((a, b) => b.at - a.at);
+    if (!category) return recentDeaths.slice().sort((a, b) => b.at - a.at);
+    const cat = normalizeCategory(category);
+    return recentDeaths
+      .filter((d) => getPlayerCategory(d.name) === cat)
+      .sort((a, b) => b.at - a.at);
   }
 
   function status() {
+    const allNames = getTrackedNamesArray();
+    const enemyNames = trackedPlayers.filter((p) => p.category === "enemy").map((p) => p.name);
+    const friendlyNames = trackedPlayers.filter((p) => p.category === "friendly").map((p) => p.name);
     return {
       running: state.running,
       config: { ...config },
-      tracked: trackedNames.slice(),
-      online: trackedNames.filter((n) => isOnline(n)),
-      offline: trackedNames.filter((n) => !isOnline(n)),
+      tracked: allNames,
+      trackedPlayers: trackedPlayers.map((p) => ({ ...p })),
+      enemy: enemyNames,
+      friendly: friendlyNames,
+      online: allNames.filter((n) => isOnline(n)),
+      offline: allNames.filter((n) => !isOnline(n)),
+      enemyDeaths: getRecentDeaths("enemy"),
+      friendlyDeaths: getRecentDeaths("friendly"),
       recentDeaths: getRecentDeaths(),
       lastPollAt: state.lastPollAt,
       lastError: state.lastError,
@@ -625,7 +689,10 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
     updateConfig,
     addTracked,
     removeTracked,
+    setCategory,
     getTrackedNames,
+    getTrackedPlayers: () => trackedPlayers.map((p) => ({ ...p })),
+    getPlayerCategory,
     isOnline,
     getRecentDeaths,
     pollOnce: () => pollOnce(),
