@@ -19,6 +19,7 @@ cat \
   src/modules/magic-wall.js \
   src/modules/hunt.js \
   src/modules/tracker.js \
+  src/modules/alpha-watch.js \
   src/ui/panel.js \
   src/main.js \
   > minibia-copilot.js

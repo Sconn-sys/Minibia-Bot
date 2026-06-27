@@ -629,7 +629,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
   function showTrackerNotification(type, name, info) {
     const host = ensureTrackerToastContainer();
-    const tone = type === "death" ? "death" : "login";
+    const tone = type === "death" ? "death" : (type === "alpha" ? "alpha" : "login");
     const node = document.createElement("div");
     node.className = "mc-toast";
     node.dataset.tone = tone;
@@ -639,6 +639,12 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       const levelTag = info?.level != null ? ` (lvl ${escapeHtml(info.level)})` : "";
       node.innerHTML =
         `<div><span class="mc-toast-name">${escapeHtml(name)}${levelTag}</span> has died by ${cause}</div>`;
+    } else if (tone === "alpha") {
+      const distanceText = info?.distance != null
+        ? ` (${escapeHtml(info.distance)} sqm)`
+        : "";
+      node.innerHTML =
+        `<div><span class="mc-toast-name">${escapeHtml(name)}</span> spotted nearby${distanceText}</div>`;
     } else {
       node.innerHTML =
         `<div><span class="mc-toast-name">${escapeHtml(name)}</span> has Logged in</div>`;
@@ -647,11 +653,40 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     host.appendChild(node);
     positionTrackerToastContainer(host);
 
-    const ttl = tone === "death" ? 12000 : 8000;
+    const ttlByTone = { death: 12000, alpha: 10000, login: 8000 };
+    const ttl = ttlByTone[tone] || 8000;
     window.setTimeout(() => {
       node.classList.add("mc-toast-leaving");
       window.setTimeout(() => node.remove(), 240);
     }, ttl);
+  }
+
+  function refreshAlphaWatchStatus() {
+    const status = bot.alphaWatch?.status?.();
+    if (!status) return;
+
+    const enabledInput = document.getElementById("minibia-copilot-alpha-watch-enabled");
+    const statusLabel = document.getElementById("minibia-copilot-alpha-watch-status");
+
+    if (enabledInput && document.activeElement !== enabledInput) {
+      enabledInput.checked = !!status.running;
+    }
+
+    if (statusLabel) {
+      if (!status.running) {
+        statusLabel.textContent = "Status: idle";
+      } else {
+        const count = status.visibleAlphas?.length || 0;
+        if (count === 0) {
+          statusLabel.textContent = "Status: watching — none on screen";
+        } else if (count === 1) {
+          const a = status.visibleAlphas[0];
+          statusLabel.textContent = `Status: 1 nearby — ${a.name}`;
+        } else {
+          statusLabel.textContent = `Status: ${count} alphas nearby`;
+        }
+      }
+    }
   }
 
   function refreshMagicWallStatus() {
@@ -1263,6 +1298,11 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         background: linear-gradient(180deg, rgba(70, 16, 16, 0.95), rgba(12, 10, 6, 0.95));
       }
 
+      #minibia-copilot-tracker-toasts .mc-toast[data-tone="alpha"] {
+        color: #ffcf5a;
+        background: linear-gradient(180deg, rgba(70, 50, 12, 0.95), rgba(12, 10, 6, 0.95));
+      }
+
       #minibia-copilot-tracker-toasts .mc-toast .mc-toast-name {
         font-weight: 700;
       }
@@ -1519,6 +1559,17 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             <div class="mc-stat"><span class="mc-stat-label">Mana</span><span class="mc-stat-value" data-tone="mana" id="minibia-copilot-snapshot-mana">—</span></div>
             <div class="mc-stat"><span class="mc-stat-label">Lvl</span><span class="mc-stat-value" data-tone="lvl" id="minibia-copilot-snapshot-level">—</span></div>
           </div>
+          <div class="mc-section">
+            <div class="mc-label">Alpha Watch</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-alpha-watch-enabled" />
+                <span>Toast on Alpha sightings</span>
+              </label>
+              <div class="mc-small-note" id="minibia-copilot-alpha-watch-status">Status: idle</div>
+            </div>
+          </div>
+
           <div class="mc-section">
             <div class="mc-label">Hunt Analyzer</div>
             <div class="mc-stack">
@@ -1955,6 +2006,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const equipAmuletTypeSelect = panel.querySelector("#minibia-copilot-equip-amulet-type");
     const equipAmuletCustomInput = panel.querySelector("#minibia-copilot-equip-amulet-custom");
     const equipAmuletAutoSwapInput = panel.querySelector("#minibia-copilot-equip-amulet-autoswap");
+    const alphaWatchEnabledInput = panel.querySelector("#minibia-copilot-alpha-watch-enabled");
     const trackerEnabledInput = panel.querySelector("#minibia-copilot-tracker-enabled");
     const trackerIntervalInput = panel.querySelector("#minibia-copilot-tracker-interval");
     const trackerAddInput = panel.querySelector("#minibia-copilot-tracker-add-input");
@@ -2264,6 +2316,17 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       equipAmuletAutoSwapInput.checked = !!bot.equipAmulet?.config?.autoSwap;
       equipAmuletAutoSwapInput.addEventListener("change", () => {
         bot.equipAmulet?.updateConfig?.({ autoSwap: equipAmuletAutoSwapInput.checked });
+      });
+    }
+
+    if (alphaWatchEnabledInput) {
+      alphaWatchEnabledInput.addEventListener("change", () => {
+        if (alphaWatchEnabledInput.checked) {
+          bot.alphaWatch?.start?.();
+        } else {
+          bot.alphaWatch?.stop?.();
+        }
+        refreshAlphaWatchStatus();
       });
     }
 
@@ -2774,6 +2837,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshMagicWallStatus();
     refreshHuntStatus();
     refreshTrackerStatus();
+    refreshAlphaWatchStatus();
     refreshVisibleCreatures();
     refreshCavePresetControls();
     refreshCaveClosestStatus();
@@ -2850,6 +2914,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshMagicWallStatus,
     refreshHuntStatus,
     refreshTrackerStatus,
+    refreshAlphaWatchStatus,
     showTrackerNotification,
     refreshVisibleCreatures,
     refreshCaveClosestStatus,

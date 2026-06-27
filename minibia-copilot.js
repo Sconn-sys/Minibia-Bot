@@ -8735,6 +8735,181 @@ window.__minibiaCopilotBundle.installTrackerModule = function installTrackerModu
 };
 window.__minibiaCopilotBundle = window.__minibiaCopilotBundle || {};
 
+window.__minibiaCopilotBundle.installAlphaWatchModule = function installAlphaWatchModule(bot) {
+  const configStorageKey = "minibiaCopilot.alphaWatch.config";
+
+  const state = {
+    running: false,
+    pollTimerId: null,
+    seenIds: new Map(),
+    lastSighting: null,
+  };
+
+  const config = Object.assign(
+    {
+      enabled: false,
+      pollIntervalMs: 2000,
+      pattern: "^alpha\\b",
+      patternFlags: "i",
+      sightingCooldownMs: 90000,
+    },
+    bot.storage.get(configStorageKey, {})
+  );
+
+  function persistConfig() {
+    bot.storage.set(configStorageKey, { ...config });
+  }
+
+  function getMatcher() {
+    try {
+      return new RegExp(String(config.pattern || "^alpha\\b"), String(config.patternFlags || "i"));
+    } catch (error) {
+      bot.log("alpha watch: invalid pattern, falling back to /^alpha\\b/i", { error: error?.message || error });
+      return /^alpha\b/i;
+    }
+  }
+
+  function pruneSeen(now) {
+    const cutoff = now - Math.max(15000, Number(config.sightingCooldownMs) || 90000);
+    for (const [id, seenAt] of state.seenIds.entries()) {
+      if (seenAt < cutoff) state.seenIds.delete(id);
+    }
+  }
+
+  function getVisibleAlphas() {
+    const monsters = bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
+    const matcher = getMatcher();
+    const playerId = window.gameClient?.player?.id;
+    return monsters.filter((creature) => {
+      if (!creature || creature.masterId === playerId) return false;
+      const name = String(creature.name || "").trim();
+      return matcher.test(name);
+    });
+  }
+
+  function tick() {
+    if (!state.running) return;
+    try {
+      const now = Date.now();
+      pruneSeen(now);
+
+      const alphas = getVisibleAlphas();
+      const playerPosition = bot.getPlayerPosition?.();
+
+      for (const creature of alphas) {
+        const id = Number(creature.id);
+        if (!Number.isFinite(id)) continue;
+        if (state.seenIds.has(id)) continue;
+        state.seenIds.set(id, now);
+
+        const pos = creature.getPosition?.() || creature.__position || null;
+        let distance = null;
+        if (pos && playerPosition && pos.z === playerPosition.z) {
+          distance = Math.max(Math.abs(pos.x - playerPosition.x), Math.abs(pos.y - playerPosition.y));
+        }
+
+        state.lastSighting = {
+          name: String(creature.name || "Alpha"),
+          id,
+          at: now,
+          distance,
+          position: pos ? { x: pos.x, y: pos.y, z: pos.z } : null,
+        };
+
+        bot.log("alpha watch: sighting", state.lastSighting);
+        try {
+          bot.ui?.showTrackerNotification?.("alpha", state.lastSighting.name, state.lastSighting);
+        } catch (error) {}
+      }
+
+      try { bot.ui?.refreshAlphaWatchStatus?.(); } catch (error) {}
+    } catch (error) {
+      bot.log("alpha watch tick failed", error?.message || error);
+    }
+  }
+
+  function start(overrides = {}) {
+    Object.assign(config, overrides);
+    config.enabled = true;
+    persistConfig();
+    if (state.running) return false;
+    state.running = true;
+    const interval = Math.max(500, Math.min(10000, Number(config.pollIntervalMs) || 2000));
+    state.pollTimerId = window.setInterval(tick, interval);
+    bot.log("alpha watch started", { pollIntervalMs: interval, pattern: config.pattern });
+    tick();
+    return true;
+  }
+
+  function stop(options = {}) {
+    const persistEnabled = options.persistEnabled !== false;
+    state.running = false;
+    if (state.pollTimerId != null) {
+      window.clearInterval(state.pollTimerId);
+      state.pollTimerId = null;
+    }
+    state.seenIds.clear();
+    if (persistEnabled) {
+      config.enabled = false;
+      persistConfig();
+    }
+    bot.log("alpha watch stopped");
+    return true;
+  }
+
+  function status() {
+    const alphas = state.running ? getVisibleAlphas() : [];
+    return {
+      running: state.running,
+      config: { ...config },
+      visibleAlphas: alphas.map((c) => ({
+        id: c.id,
+        name: c.name,
+        position: c.getPosition?.() || c.__position || null,
+      })),
+      lastSighting: state.lastSighting,
+      seenRecently: state.seenIds.size,
+    };
+  }
+
+  function updateConfig(nextConfig = {}) {
+    Object.assign(config, nextConfig);
+    persistConfig();
+    if (state.running) {
+      stop({ persistEnabled: false });
+      start();
+    }
+    bot.log("alpha watch config updated", { ...config });
+    return { ...config };
+  }
+
+  function clearSeen() {
+    state.seenIds.clear();
+    bot.log("alpha watch: cleared seen-creature memory");
+    return true;
+  }
+
+  bot.addCleanup(() => {
+    if (state.pollTimerId != null) {
+      window.clearInterval(state.pollTimerId);
+      state.pollTimerId = null;
+    }
+  });
+
+  if (config.enabled) start();
+
+  bot.alphaWatch = {
+    start,
+    stop,
+    status,
+    updateConfig,
+    clearSeen,
+    getVisibleAlphas,
+    config,
+  };
+};
+window.__minibiaCopilotBundle = window.__minibiaCopilotBundle || {};
+
 window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
   const panelPositionKey = "minibiaCopilot.ui.panelPosition";
   const panelCollapsedKey = "minibiaCopilot.ui.panelCollapsed";
@@ -9364,7 +9539,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
   function showTrackerNotification(type, name, info) {
     const host = ensureTrackerToastContainer();
-    const tone = type === "death" ? "death" : "login";
+    const tone = type === "death" ? "death" : (type === "alpha" ? "alpha" : "login");
     const node = document.createElement("div");
     node.className = "mc-toast";
     node.dataset.tone = tone;
@@ -9374,6 +9549,12 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       const levelTag = info?.level != null ? ` (lvl ${escapeHtml(info.level)})` : "";
       node.innerHTML =
         `<div><span class="mc-toast-name">${escapeHtml(name)}${levelTag}</span> has died by ${cause}</div>`;
+    } else if (tone === "alpha") {
+      const distanceText = info?.distance != null
+        ? ` (${escapeHtml(info.distance)} sqm)`
+        : "";
+      node.innerHTML =
+        `<div><span class="mc-toast-name">${escapeHtml(name)}</span> spotted nearby${distanceText}</div>`;
     } else {
       node.innerHTML =
         `<div><span class="mc-toast-name">${escapeHtml(name)}</span> has Logged in</div>`;
@@ -9382,11 +9563,40 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     host.appendChild(node);
     positionTrackerToastContainer(host);
 
-    const ttl = tone === "death" ? 12000 : 8000;
+    const ttlByTone = { death: 12000, alpha: 10000, login: 8000 };
+    const ttl = ttlByTone[tone] || 8000;
     window.setTimeout(() => {
       node.classList.add("mc-toast-leaving");
       window.setTimeout(() => node.remove(), 240);
     }, ttl);
+  }
+
+  function refreshAlphaWatchStatus() {
+    const status = bot.alphaWatch?.status?.();
+    if (!status) return;
+
+    const enabledInput = document.getElementById("minibia-copilot-alpha-watch-enabled");
+    const statusLabel = document.getElementById("minibia-copilot-alpha-watch-status");
+
+    if (enabledInput && document.activeElement !== enabledInput) {
+      enabledInput.checked = !!status.running;
+    }
+
+    if (statusLabel) {
+      if (!status.running) {
+        statusLabel.textContent = "Status: idle";
+      } else {
+        const count = status.visibleAlphas?.length || 0;
+        if (count === 0) {
+          statusLabel.textContent = "Status: watching — none on screen";
+        } else if (count === 1) {
+          const a = status.visibleAlphas[0];
+          statusLabel.textContent = `Status: 1 nearby — ${a.name}`;
+        } else {
+          statusLabel.textContent = `Status: ${count} alphas nearby`;
+        }
+      }
+    }
   }
 
   function refreshMagicWallStatus() {
@@ -9998,6 +10208,11 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         background: linear-gradient(180deg, rgba(70, 16, 16, 0.95), rgba(12, 10, 6, 0.95));
       }
 
+      #minibia-copilot-tracker-toasts .mc-toast[data-tone="alpha"] {
+        color: #ffcf5a;
+        background: linear-gradient(180deg, rgba(70, 50, 12, 0.95), rgba(12, 10, 6, 0.95));
+      }
+
       #minibia-copilot-tracker-toasts .mc-toast .mc-toast-name {
         font-weight: 700;
       }
@@ -10254,6 +10469,17 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             <div class="mc-stat"><span class="mc-stat-label">Mana</span><span class="mc-stat-value" data-tone="mana" id="minibia-copilot-snapshot-mana">—</span></div>
             <div class="mc-stat"><span class="mc-stat-label">Lvl</span><span class="mc-stat-value" data-tone="lvl" id="minibia-copilot-snapshot-level">—</span></div>
           </div>
+          <div class="mc-section">
+            <div class="mc-label">Alpha Watch</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-alpha-watch-enabled" />
+                <span>Toast on Alpha sightings</span>
+              </label>
+              <div class="mc-small-note" id="minibia-copilot-alpha-watch-status">Status: idle</div>
+            </div>
+          </div>
+
           <div class="mc-section">
             <div class="mc-label">Hunt Analyzer</div>
             <div class="mc-stack">
@@ -10690,6 +10916,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const equipAmuletTypeSelect = panel.querySelector("#minibia-copilot-equip-amulet-type");
     const equipAmuletCustomInput = panel.querySelector("#minibia-copilot-equip-amulet-custom");
     const equipAmuletAutoSwapInput = panel.querySelector("#minibia-copilot-equip-amulet-autoswap");
+    const alphaWatchEnabledInput = panel.querySelector("#minibia-copilot-alpha-watch-enabled");
     const trackerEnabledInput = panel.querySelector("#minibia-copilot-tracker-enabled");
     const trackerIntervalInput = panel.querySelector("#minibia-copilot-tracker-interval");
     const trackerAddInput = panel.querySelector("#minibia-copilot-tracker-add-input");
@@ -10999,6 +11226,17 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       equipAmuletAutoSwapInput.checked = !!bot.equipAmulet?.config?.autoSwap;
       equipAmuletAutoSwapInput.addEventListener("change", () => {
         bot.equipAmulet?.updateConfig?.({ autoSwap: equipAmuletAutoSwapInput.checked });
+      });
+    }
+
+    if (alphaWatchEnabledInput) {
+      alphaWatchEnabledInput.addEventListener("change", () => {
+        if (alphaWatchEnabledInput.checked) {
+          bot.alphaWatch?.start?.();
+        } else {
+          bot.alphaWatch?.stop?.();
+        }
+        refreshAlphaWatchStatus();
       });
     }
 
@@ -11509,6 +11747,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshMagicWallStatus();
     refreshHuntStatus();
     refreshTrackerStatus();
+    refreshAlphaWatchStatus();
     refreshVisibleCreatures();
     refreshCavePresetControls();
     refreshCaveClosestStatus();
@@ -11585,6 +11824,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshMagicWallStatus,
     refreshHuntStatus,
     refreshTrackerStatus,
+    refreshAlphaWatchStatus,
     showTrackerNotification,
     refreshVisibleCreatures,
     refreshCaveClosestStatus,
@@ -11641,6 +11881,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     ["magicWall", "minibiaCopilot.magicWall.config"],
     ["hunt", "minibiaCopilot.hunt.config"],
     ["tracker", "minibiaCopilot.tracker.config"],
+    ["alphaWatch", "minibiaCopilot.alphaWatch.config"],
   ];
 
   function getPersistedEnabledSnapshot(bot) {
@@ -11709,6 +11950,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     currentBundle.installMagicWallModule(bot);
     currentBundle.installHuntModule(bot);
     currentBundle.installTrackerModule(bot);
+    currentBundle.installAlphaWatchModule(bot);
     currentBundle.installPanel(bot);
 
     bot.ui.inject();
@@ -11736,6 +11978,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       magicWall: bot.magicWall.status(),
       hunt: bot.hunt.status(),
       tracker: bot.tracker.status(),
+      alphaWatch: bot.alphaWatch.status(),
     });
 
     window.minibiaCopilot = bot;
@@ -11744,7 +11987,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
     console.log("[minibia-copilot] ready", {
       version: bot.version,
-      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "equipAmulet", "eat", "talk", "magicWall", "hunt", "tracker", "ui"],
+      modules: ["pz", "xray", "panic", "rune", "heal", "invisible", "magicShield", "attack", "cave", "equipRing", "equipAmulet", "eat", "talk", "magicWall", "hunt", "tracker", "alphaWatch", "ui"],
     });
     console.log("minibiaCopilot.reload()");
     console.log("minibiaCopilot.xray.status()");
