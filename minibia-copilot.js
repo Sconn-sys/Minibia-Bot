@@ -9431,31 +9431,43 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
 
       #minibia-copilot-panel .mc-tabs {
         display: flex;
-        padding: 6px 8px 0;
-        gap: 2px;
+        padding: 6px 6px 0;
+        gap: 1px;
         border-bottom: 1px solid rgba(224, 200, 148, 0.22);
         background: rgba(0, 0, 0, 0.12);
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      #minibia-copilot-panel .mc-tabs::-webkit-scrollbar {
+        height: 4px;
+      }
+      #minibia-copilot-panel .mc-tabs::-webkit-scrollbar-thumb {
+        background: rgba(224, 200, 148, 0.18);
+        border-radius: 4px;
       }
 
       #minibia-copilot-panel .mc-tab-button {
-        flex: 1;
+        flex: 1 1 0;
+        min-width: 0;
         width: auto;
-        padding: 7px 4px 9px;
+        padding: 6px 2px 8px;
         border: 0;
         border-bottom: 2px solid transparent;
         border-radius: 6px 6px 0 0;
         background: transparent;
         color: #8c7a52;
-        font-size: 10px;
+        font-size: 9px;
         font-weight: 600;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.02em;
         text-transform: uppercase;
         line-height: 1.15;
         cursor: pointer;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 3px;
+        gap: 2px;
+        white-space: nowrap;
       }
 
       #minibia-copilot-panel .mc-tab-button:hover {
