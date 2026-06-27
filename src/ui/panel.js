@@ -371,6 +371,70 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     equipRingToggle.checked = !!bot.equipRing?.status?.().running;
   }
 
+  const tabStorageKey = "minibiaCopilot.ui.activeTab";
+  const defaultTab = "status";
+  const moduleSummaryDefs = [
+    { key: "heal",        label: "Heal",   getRunning: () => !!bot.heal?.status?.().running },
+    { key: "attack",      label: "Attack", getRunning: () => !!bot.attack?.status?.().running },
+    { key: "rune",        label: "Rune",   getRunning: () => !!bot.rune?.status?.().running },
+    { key: "eat",         label: "Eat",    getRunning: () => !!bot.eat?.status?.().running },
+    { key: "invisible",   label: "Invis",  getRunning: () => !!bot.invisible?.status?.().running },
+    { key: "shield",      label: "Shield", getRunning: () => !!bot.magicShield?.status?.().running },
+    { key: "ring",        label: "Ring",   getRunning: () => !!bot.equipRing?.status?.().running },
+    { key: "cave",        label: "Cave",   getRunning: () => !!bot.cave?.status?.().running },
+    { key: "talk",        label: "Talk",   getRunning: () => !!bot.talk?.status?.().running },
+    { key: "mw",          label: "MW",     getRunning: () => !!bot.magicWall?.status?.().running },
+  ];
+
+  function activateTab(name) {
+    const panel = document.getElementById("minibia-copilot-panel");
+    if (!panel) return;
+    const buttons = panel.querySelectorAll(".mc-tab-button");
+    const panes = panel.querySelectorAll(".mc-tab-pane");
+    let matched = false;
+    buttons.forEach((button) => {
+      const isActive = button.dataset.tab === name;
+      button.dataset.active = isActive ? "true" : "false";
+      if (isActive) matched = true;
+    });
+    panes.forEach((pane) => {
+      pane.hidden = pane.dataset.tab !== name;
+    });
+    if (!matched) return;
+    try { bot.storage.set(tabStorageKey, name); } catch (error) {}
+  }
+
+  function refreshPlayerSnapshot() {
+    const snapshot = bot.getPlayerSnapshot?.();
+    const hpEl = document.getElementById("minibia-copilot-snapshot-hp");
+    const manaEl = document.getElementById("minibia-copilot-snapshot-mana");
+    const levelEl = document.getElementById("minibia-copilot-snapshot-level");
+    if (hpEl) {
+      const cur = snapshot?.health;
+      const max = snapshot?.maxHealth;
+      hpEl.textContent = cur != null && max != null ? `${cur}/${max}` : (cur != null ? String(cur) : "—");
+    }
+    if (manaEl) {
+      const cur = snapshot?.mana;
+      const max = snapshot?.maxMana;
+      manaEl.textContent = cur != null && max != null ? `${cur}/${max}` : (cur != null ? String(cur) : "—");
+    }
+    if (levelEl) {
+      levelEl.textContent = snapshot?.level != null ? String(snapshot.level) : "—";
+    }
+  }
+
+  function refreshStatusPillbar() {
+    const container = document.getElementById("minibia-copilot-pillbar");
+    if (!container) return;
+    const html = moduleSummaryDefs.map((def) => {
+      let running = false;
+      try { running = def.getRunning(); } catch (error) { running = false; }
+      return `<span class="mc-pill" data-active="${running ? "true" : "false"}">${def.label}</span>`;
+    }).join("");
+    container.innerHTML = html;
+  }
+
   function refreshMagicWallStatus() {
     const enabledInput = document.getElementById("minibia-copilot-magic-wall-enabled");
     const audioInput = document.getElementById("minibia-copilot-magic-wall-audio");
@@ -623,88 +687,244 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       #minibia-copilot-panel {
         position: fixed;
         z-index: 999999;
-        max-width: calc(100vw - 32px);
-        padding: 12px;
-        border: 1px solid rgba(224, 200, 148, 0.45);
-        border-radius: 10px;
-        background: linear-gradient(180deg, rgba(30, 23, 15, 0.95), rgba(15, 11, 8, 0.97));
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-        color: #f1e2b8;
-        font: 12px/1.35 Verdana, sans-serif;
-        user-select: none;
-      }
-
-      #minibia-copilot-panel {
         top: 16px;
         right: 16px;
-        width: 960px;
+        width: 340px;
+        max-width: calc(100vw - 32px);
+        max-height: calc(100vh - 32px);
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+        border: 1px solid rgba(224, 200, 148, 0.45);
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(30, 23, 15, 0.97), rgba(15, 11, 8, 0.98));
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        color: #f1e2b8;
+        font: 12px/1.4 Verdana, sans-serif;
+        user-select: none;
+        overflow: hidden;
       }
 
       #minibia-copilot-panel[data-collapsed="true"] {
-        width: 220px;
+        width: 200px;
+        max-height: none;
       }
 
       #minibia-copilot-panel .mc-title {
         margin: 0;
         font-weight: 700;
-        letter-spacing: 0.04em;
+        font-size: 12px;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
         cursor: move;
+        color: #f7eccf;
+      }
+
+      #minibia-copilot-panel .mc-title-accent {
+        color: #ffcf5a;
       }
 
       #minibia-copilot-panel .mc-titlebar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
-        margin: 0 0 8px;
+        gap: 6px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(224, 200, 148, 0.22);
+        background: linear-gradient(180deg, rgba(60, 46, 28, 0.55), rgba(28, 20, 12, 0.25));
+      }
+
+      #minibia-copilot-panel .mc-titlebar-actions {
+        display: flex;
+        gap: 4px;
       }
 
       #minibia-copilot-panel .mc-icon-button {
         width: 24px;
         min-width: 24px;
-        padding: 2px 0;
+        height: 24px;
+        padding: 0;
         border-radius: 6px;
         font-weight: 700;
+        font-size: 14px;
         line-height: 1;
       }
 
-      #minibia-copilot-panel[data-collapsed="true"] .mc-titlebar {
-        margin-bottom: 0;
-      }
-
-      #minibia-copilot-panel .mc-body {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 280px 240px;
-        gap: 12px;
-        align-items: start;
-      }
-
-      #minibia-copilot-panel .mc-body[hidden] {
+      #minibia-copilot-panel[data-collapsed="true"] .mc-tabs,
+      #minibia-copilot-panel[data-collapsed="true"] .mc-pillbar,
+      #minibia-copilot-panel[data-collapsed="true"] .mc-body {
         display: none !important;
       }
 
-      #minibia-copilot-panel .mc-side-column,
-      #minibia-copilot-panel .mc-main-column,
-      #minibia-copilot-panel .mc-cave-column {
+      #minibia-copilot-panel .mc-pillbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(224, 200, 148, 0.12);
+        background: rgba(0, 0, 0, 0.18);
+      }
+
+      #minibia-copilot-panel .mc-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        background: rgba(224, 200, 148, 0.08);
+        color: #8c7a52;
+        border: 1px solid transparent;
+      }
+
+      #minibia-copilot-panel .mc-pill[data-active="true"] {
+        background: rgba(120, 220, 130, 0.18);
+        color: #b5ecb8;
+        border-color: rgba(120, 220, 130, 0.35);
+      }
+
+      #minibia-copilot-panel .mc-pill::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.7;
+      }
+
+      #minibia-copilot-panel .mc-tabs {
+        display: flex;
+        padding: 6px 8px 0;
+        gap: 2px;
+        border-bottom: 1px solid rgba(224, 200, 148, 0.22);
+        background: rgba(0, 0, 0, 0.12);
+      }
+
+      #minibia-copilot-panel .mc-tab-button {
+        flex: 1;
+        width: auto;
+        padding: 7px 4px 9px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        border-radius: 6px 6px 0 0;
+        background: transparent;
+        color: #8c7a52;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        line-height: 1.15;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+      }
+
+      #minibia-copilot-panel .mc-tab-button:hover {
+        color: #f1e2b8;
+        background: rgba(224, 200, 148, 0.08);
+      }
+
+      #minibia-copilot-panel .mc-tab-button[data-active="true"] {
+        color: #ffcf5a;
+        border-bottom-color: #ffcf5a;
+        background: rgba(255, 207, 90, 0.06);
+      }
+
+      #minibia-copilot-panel .mc-tab-icon {
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      #minibia-copilot-panel .mc-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 10px 12px 14px;
+      }
+
+      #minibia-copilot-panel .mc-body::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      #minibia-copilot-panel .mc-body::-webkit-scrollbar-thumb {
+        background: rgba(224, 200, 148, 0.18);
+        border-radius: 6px;
+      }
+
+      #minibia-copilot-panel .mc-tab-pane[hidden] {
+        display: none !important;
+      }
+
+      #minibia-copilot-panel .mc-tab-pane {
         display: grid;
         gap: 10px;
       }
 
       #minibia-copilot-panel .mc-section {
-        padding-top: 10px;
-        border-top: 1px solid rgba(224, 200, 148, 0.16);
+        padding: 10px 11px;
+        border: 1px solid rgba(224, 200, 148, 0.18);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(50, 38, 22, 0.45), rgba(28, 20, 12, 0.55));
       }
 
       #minibia-copilot-panel .mc-column-section:first-child {
-        padding-top: 0;
-        border-top: 0;
+        padding-top: 10px;
       }
 
       #minibia-copilot-panel .mc-label {
         margin: 0 0 8px;
-        color: #d3c49d;
+        color: #ffcf5a;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
         word-break: break-word;
+      }
+
+      #minibia-copilot-panel .mc-snapshot {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        padding: 10px;
+        border: 1px solid rgba(224, 200, 148, 0.22);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(40, 30, 18, 0.6), rgba(20, 14, 8, 0.7));
+      }
+
+      #minibia-copilot-panel .mc-stat {
+        text-align: center;
+      }
+
+      #minibia-copilot-panel .mc-stat-label {
+        display: block;
+        font-size: 9px;
+        color: #8c7a52;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      #minibia-copilot-panel .mc-stat-value {
+        display: block;
+        margin-top: 2px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #f7eccf;
+      }
+
+      #minibia-copilot-panel .mc-stat-value[data-tone="hp"] {
+        color: #ff7d6f;
+      }
+
+      #minibia-copilot-panel .mc-stat-value[data-tone="mana"] {
+        color: #6fa8ff;
+      }
+
+      #minibia-copilot-panel .mc-stat-value[data-tone="lvl"] {
+        color: #ffcf5a;
       }
 
       #minibia-copilot-panel .mc-actions {
@@ -903,17 +1123,11 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         font-size: 11px;
       }
 
-      @media (max-width: 760px) {
+      @media (max-width: 420px) {
         #minibia-copilot-panel {
-          width: min(720px, calc(100vw - 32px));
-        }
-
-        #minibia-copilot-panel .mc-body {
-          grid-template-columns: 1fr;
-        }
-
-        #minibia-copilot-panel .mc-field-grid {
-          grid-template-columns: 1fr;
+          width: calc(100vw - 24px);
+          right: 12px;
+          top: 12px;
         }
       }
     `;
@@ -922,98 +1136,31 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const panel = document.createElement("div");
     panel.id = "minibia-copilot-panel";
     panel.innerHTML = `
-        <div class="mc-titlebar">
-        <div class="mc-title">Minibia Copilot</div>
-        <button type="button" class="mc-icon-button" id="minibia-copilot-collapse" aria-label="Minimize panel" title="Minimize">−</button>
+      <div class="mc-titlebar">
+        <div class="mc-title">Minibia <span class="mc-title-accent">Copilot</span></div>
+        <div class="mc-titlebar-actions">
+          <button type="button" class="mc-icon-button" id="minibia-copilot-reload" aria-label="Reload bot" title="Reload bot">⟳</button>
+          <button type="button" class="mc-icon-button" id="minibia-copilot-collapse" aria-label="Minimize panel" title="Minimize">−</button>
+        </div>
+      </div>
+      <div class="mc-pillbar" id="minibia-copilot-pillbar"></div>
+      <div class="mc-tabs" id="minibia-copilot-tabs">
+        <button type="button" class="mc-tab-button" data-tab="status"><span class="mc-tab-icon">⚡</span><span>Status</span></button>
+        <button type="button" class="mc-tab-button" data-tab="combat"><span class="mc-tab-icon">⚔</span><span>Combat</span></button>
+        <button type="button" class="mc-tab-button" data-tab="survival"><span class="mc-tab-icon">❤</span><span>Survival</span></button>
+        <button type="button" class="mc-tab-button" data-tab="navigation"><span class="mc-tab-icon">🗺</span><span>Navigate</span></button>
+        <button type="button" class="mc-tab-button" data-tab="utility"><span class="mc-tab-icon">⚙</span><span>Utility</span></button>
       </div>
       <div class="mc-body">
-        <div class="mc-main-column">
-          <div class="mc-actions mc-column-section">
-            <button type="button" id="minibia-copilot-reload">Reload Bot</button>
+
+        <div class="mc-tab-pane" data-tab="status" hidden>
+          <div class="mc-snapshot" id="minibia-copilot-snapshot">
+            <div class="mc-stat"><span class="mc-stat-label">HP</span><span class="mc-stat-value" data-tone="hp" id="minibia-copilot-snapshot-hp">—</span></div>
+            <div class="mc-stat"><span class="mc-stat-label">Mana</span><span class="mc-stat-value" data-tone="mana" id="minibia-copilot-snapshot-mana">—</span></div>
+            <div class="mc-stat"><span class="mc-stat-label">Lvl</span><span class="mc-stat-value" data-tone="lvl" id="minibia-copilot-snapshot-level">—</span></div>
           </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-label" id="minibia-copilot-home">Panic Runner Home: not set</div>
-            <div class="mc-stack">
-              <button type="button" id="minibia-copilot-set-home">Set Home</button>
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-panic-unknown" />
-                <span>Unknown Player</span>
-              </label>
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-panic-health" />
-                <span>Lose Health</span>
-              </label>
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-panic-return" />
-                <span>Auto Return</span>
-              </label>
-              <div class="mc-inline">
-                <input type="text" id="minibia-copilot-panic-trusted-input" placeholder="Trusted name" />
-                <button type="button" class="mc-small-button" id="minibia-copilot-panic-trusted-add">Add</button>
-              </div>
-              <div class="mc-list" id="minibia-copilot-panic-trusted-list"></div>
-            </div>
-          </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-label">GM Kill Switch</div>
-            <div class="mc-stack">
-              <div class="mc-inline">
-                <input type="text" id="minibia-copilot-panic-gm-input" placeholder="Game master name" />
-                <button type="button" class="mc-small-button" id="minibia-copilot-panic-gm-add">Add</button>
-              </div>
-              <div class="mc-list" id="minibia-copilot-panic-gm-list"></div>
-            </div>
-          </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-actions">
-              <div class="mc-row-three">
-                <label class="mc-toggle">
-                  <input type="checkbox" id="minibia-copilot-rune-enabled" />
-                  <span>Magic Level Trainer</span>
-                </label>
-                <input type="text" id="minibia-copilot-rune-spell" placeholder="Spell words" />
-                <input type="number" id="minibia-copilot-rune-mana" min="0" placeholder="Mana" />
-              </div>
-              <div class="mc-row mc-row-compact">
-                <label class="mc-toggle">
-                  <input type="checkbox" id="minibia-copilot-auto-eat-enabled" />
-                  <span>Auto Eat</span>
-                </label>
-                <label class="mc-field mc-field-compact" for="minibia-copilot-auto-eat-hotkey">
-                  <span class="mc-field-label">Eat Hotkey (1-12)</span>
-                  <input type="number" id="minibia-copilot-auto-eat-hotkey" min="1" max="12" placeholder="10" />
-                </label>
-              </div>
-              <div class="mc-row">
-                <label class="mc-toggle">
-                  <input type="checkbox" id="minibia-copilot-auto-invisible-enabled" />
-                  <span>Auto Invisible</span>
-                </label>
-                <div class="mc-small-note">Casts utana vid whenever invisibility is not active.</div>
-              </div>
-              <div class="mc-row">
-                <label class="mc-toggle">
-                  <input type="checkbox" id="minibia-copilot-auto-magic-shield-enabled" />
-                  <span>Auto Utamo Vita</span>
-                </label>
-                <div class="mc-small-note">Casts utamo vita whenever magic shield is not active.</div>
-              </div>
-              <div class="mc-row">
-                <label class="mc-toggle">
-                  <input type="checkbox" id="minibia-copilot-equip-ring-enabled" />
-                  <span>Equip Ring</span>
-                </label>
-                <div></div>
-              </div>
-            </div>
-          </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-note">Loaded routines: Panic Runner, magic level trainer, auto eat, auto invisible, auto utamo vita, equip ring, auto heal, auto attack, and talk.</div>
-          </div>
-        </div>
-        <div class="mc-side-column">
-          <div class="mc-section mc-column-section">
-            <div class="mc-label">Xray</div>
+          <div class="mc-section">
+            <div class="mc-label">X-Ray</div>
             <button type="button" class="mc-small-button" id="minibia-copilot-xray-overlay-toggle">Disable Overlay</button>
             <div class="mc-small-note" id="minibia-copilot-xray-overlay-status">Overlay: on</div>
             <label class="mc-field" for="minibia-copilot-xray-floor-select">
@@ -1024,7 +1171,55 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             </label>
             <div class="mc-list" id="minibia-copilot-visible-creatures-list"></div>
           </div>
-          <div class="mc-section mc-column-section">
+        </div>
+
+        <div class="mc-tab-pane" data-tab="combat" hidden>
+          <div class="mc-section">
+            <div class="mc-label">Auto Attack</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-auto-attack-enabled" />
+                <span>Enable Auto Attack</span>
+              </label>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-auto-attack-melee" />
+                <span>Melee Mode</span>
+              </label>
+              <div class="mc-field-grid">
+                <label class="mc-field" for="minibia-copilot-auto-attack-hotkey">
+                  <span class="mc-field-label">Target Hotkey (1-12)</span>
+                  <input type="number" id="minibia-copilot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
+                </label>
+                <label class="mc-field" for="minibia-copilot-auto-attack-rune-hotkey">
+                  <span class="mc-field-label">Rune Hotkey (1-12)</span>
+                  <input type="number" id="minibia-copilot-auto-attack-rune-hotkey" min="1" max="12" placeholder="4" />
+                </label>
+              </div>
+              <div class="mc-small-note">Melee mode uses the target hotkey, then walks adjacent. Non-melee uses target hotkey to acquire, rune hotkey to cast.</div>
+            </div>
+          </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Auto Utamo Vita</div>
+            <label class="mc-toggle">
+              <input type="checkbox" id="minibia-copilot-auto-magic-shield-enabled" />
+              <span>Re-cast magic shield when down</span>
+            </label>
+            <div class="mc-small-note">Casts utamo vita whenever magic shield is not active.</div>
+          </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Auto Invisible</div>
+            <label class="mc-toggle">
+              <input type="checkbox" id="minibia-copilot-auto-invisible-enabled" />
+              <span>Re-cast invisibility when down</span>
+            </label>
+            <div class="mc-small-note">Casts utana vid whenever invisibility is not active.</div>
+          </div>
+        </div>
+
+        <div class="mc-tab-pane" data-tab="survival" hidden>
+          <div class="mc-section">
             <div class="mc-label">Auto Heal</div>
             <div class="mc-stack">
               <label class="mc-toggle">
@@ -1049,82 +1244,31 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                   <input type="number" id="minibia-copilot-auto-heal-mana-hotkey" min="1" max="12" placeholder="2" />
                 </label>
               </div>
-              <div class="mc-small-note">Checks about twenty times per second. HP is used before mana, and unregistered hotkey presses are retried quickly.</div>
+              <div class="mc-small-note">Polled ~20×/sec. HP fires before mana.</div>
             </div>
           </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-label">Talk</div>
-            <div class="mc-stack">
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-talk-enabled" />
-                <span>Enable Auto Reply</span>
-              </label>
-              <input type="password" id="minibia-copilot-talk-api-key" placeholder="Gemini API key" />
-              <textarea id="minibia-copilot-talk-prompt" placeholder="Reply style prompt"></textarea>
-              <div class="mc-small-note" id="minibia-copilot-talk-status">Status: idle</div>
-              <div class="mc-small-note">Replies only to the newest unseen message in Default chat.</div>
-              <div class="mc-small-note">It will not reply to itself and will not admit it is a bot.</div>
-            </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Auto Eat</div>
+            <label class="mc-toggle">
+              <input type="checkbox" id="minibia-copilot-auto-eat-enabled" />
+              <span>Enable Auto Eat</span>
+            </label>
+            <label class="mc-field" for="minibia-copilot-auto-eat-hotkey">
+              <span class="mc-field-label">Eat Hotkey (1-12)</span>
+              <input type="number" id="minibia-copilot-auto-eat-hotkey" min="1" max="12" placeholder="10" />
+            </label>
           </div>
-        </div>
-        <div class="mc-cave-column">
-          <div class="mc-section mc-column-section">
-            <div class="mc-label">Cave Bot</div>
-            <div class="mc-stack">
-              <div class="mc-field-grid">
-                <label class="mc-field" for="minibia-copilot-cave-preset-select">
-                  <select id="minibia-copilot-cave-preset-select"></select>
-                </label>
-              </div>
-              <div class="mc-actions mc-actions-inline-two">
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-preset-new">New</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-preset-delete">Delete</button>
-              </div>
-              <div class="mc-actions mc-actions-inline-two">
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record">Record Node</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-remove-last">Remove Last</button>
-              </div>
-              <div class="mc-actions mc-actions-inline-three">
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-rope">+ Rope</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-ladder">+ Ladder</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-shovel">+ Shovel</button>
-              </div>
-              <div class="mc-actions mc-actions-inline-two">
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-use">+ Use Tile</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-stand">+ Stand</button>
-              </div>
-              <div class="mc-small-note" id="minibia-copilot-cave-closest">Closest start: no waypoints</div>
-              <div class="mc-small-note" id="minibia-copilot-cave-transition-status">Transitions learned: none</div>
-              <div class="mc-actions mc-actions-inline-two">
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-start">Start</button>
-                <button type="button" class="mc-small-button" id="minibia-copilot-cave-stop">Stop</button>
-              </div>
-              <div class="mc-small-note" id="minibia-copilot-cave-status">Status: no waypoints</div>
-            </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Equip Ring</div>
+            <label class="mc-toggle">
+              <input type="checkbox" id="minibia-copilot-equip-ring-enabled" />
+              <span>Keep ring equipped</span>
+            </label>
           </div>
-          <div class="mc-section mc-column-section">
-            <div class="mc-label">Auto Attack</div>
-            <div class="mc-stack">
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-auto-attack-enabled" />
-                <span>Enable Auto Attack</span>
-              </label>
-              <label class="mc-toggle">
-                <input type="checkbox" id="minibia-copilot-auto-attack-melee" />
-                <span>Melee Mode</span>
-              </label>
-              <label class="mc-field" for="minibia-copilot-auto-attack-hotkey">
-                <span class="mc-field-label">Target Hotkey (1-12)</span>
-                <input type="number" id="minibia-copilot-auto-attack-hotkey" min="1" max="12" placeholder="3" />
-              </label>
-              <label class="mc-field" for="minibia-copilot-auto-attack-rune-hotkey">
-                <span class="mc-field-label">Rune Hotkey (1-12)</span>
-                <input type="number" id="minibia-copilot-auto-attack-rune-hotkey" min="1" max="12" placeholder="4" />
-              </label>
-              <div class="mc-small-note">Melee mode uses the target hotkey, then walks adjacent to the target. Non-melee mode uses the target hotkey to acquire a target and the rune hotkey to cast on that target.</div>
-            </div>
-          </div>
-          <div class="mc-section mc-column-section">
+
+          <div class="mc-section">
             <div class="mc-label">Magic Wall Timer</div>
             <div class="mc-stack">
               <label class="mc-toggle">
@@ -1135,18 +1279,134 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                 <input type="checkbox" id="minibia-copilot-magic-wall-audio" />
                 <span>Alarm at lead time</span>
               </label>
-              <label class="mc-field" for="minibia-copilot-magic-wall-duration">
-                <span class="mc-field-label">Duration (s)</span>
-                <input type="number" id="minibia-copilot-magic-wall-duration" min="1" max="120" placeholder="20" />
-              </label>
-              <label class="mc-field" for="minibia-copilot-magic-wall-lead">
-                <span class="mc-field-label">Flash/alarm lead (s)</span>
-                <input type="number" id="minibia-copilot-magic-wall-lead" min="0" max="20" placeholder="3" />
-              </label>
+              <div class="mc-field-grid">
+                <label class="mc-field" for="minibia-copilot-magic-wall-duration">
+                  <span class="mc-field-label">Duration (s)</span>
+                  <input type="number" id="minibia-copilot-magic-wall-duration" min="1" max="120" placeholder="20" />
+                </label>
+                <label class="mc-field" for="minibia-copilot-magic-wall-lead">
+                  <span class="mc-field-label">Lead (s)</span>
+                  <input type="number" id="minibia-copilot-magic-wall-lead" min="0" max="20" placeholder="3" />
+                </label>
+              </div>
               <div class="mc-small-note" id="minibia-copilot-magic-wall-status">Status: idle</div>
             </div>
           </div>
+
+          <div class="mc-section">
+            <div class="mc-label" id="minibia-copilot-home">Panic Runner Home: not set</div>
+            <div class="mc-stack">
+              <button type="button" id="minibia-copilot-set-home">Set Home (current tile)</button>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-panic-unknown" />
+                <span>Trigger on unknown player</span>
+              </label>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-panic-health" />
+                <span>Trigger on health loss</span>
+              </label>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-panic-return" />
+                <span>Auto return after threat</span>
+              </label>
+              <div class="mc-field-label">Trusted names</div>
+              <div class="mc-inline">
+                <input type="text" id="minibia-copilot-panic-trusted-input" placeholder="Add name" />
+                <button type="button" class="mc-small-button" id="minibia-copilot-panic-trusted-add">Add</button>
+              </div>
+              <div class="mc-list" id="minibia-copilot-panic-trusted-list"></div>
+            </div>
+          </div>
+
+          <div class="mc-section">
+            <div class="mc-label">GM Kill Switch</div>
+            <div class="mc-stack">
+              <div class="mc-inline">
+                <input type="text" id="minibia-copilot-panic-gm-input" placeholder="Game master name" />
+                <button type="button" class="mc-small-button" id="minibia-copilot-panic-gm-add">Add</button>
+              </div>
+              <div class="mc-list" id="minibia-copilot-panic-gm-list"></div>
+            </div>
+          </div>
         </div>
+
+        <div class="mc-tab-pane" data-tab="navigation" hidden>
+          <div class="mc-section">
+            <div class="mc-label">Cave Bot</div>
+            <div class="mc-stack">
+              <label class="mc-field" for="minibia-copilot-cave-preset-select">
+                <span class="mc-field-label">Active preset</span>
+                <select id="minibia-copilot-cave-preset-select"></select>
+              </label>
+              <div class="mc-actions mc-actions-inline-two">
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-preset-new">New Preset</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-preset-delete">Delete</button>
+              </div>
+              <div class="mc-field-label">Record waypoint at current spot</div>
+              <div class="mc-actions mc-actions-inline-two">
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record">+ Node</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-stand">+ Stand</button>
+              </div>
+              <div class="mc-actions mc-actions-inline-three">
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-rope">+ Rope</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-ladder">+ Ladder</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-shovel">+ Shovel</button>
+              </div>
+              <div class="mc-actions mc-actions-inline-two">
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-record-use">+ Use Tile</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-remove-last">Remove Last</button>
+              </div>
+              <div class="mc-small-note" id="minibia-copilot-cave-closest">Closest start: no waypoints</div>
+              <div class="mc-small-note" id="minibia-copilot-cave-transition-status">Transitions learned: none</div>
+              <div class="mc-actions mc-actions-inline-two">
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-start">Start</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-cave-stop">Stop</button>
+              </div>
+              <div class="mc-small-note" id="minibia-copilot-cave-status">Status: no waypoints</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mc-tab-pane" data-tab="utility" hidden>
+          <div class="mc-section">
+            <div class="mc-label">Magic Level Trainer</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-rune-enabled" />
+                <span>Enable rune loop</span>
+              </label>
+              <label class="mc-field" for="minibia-copilot-rune-spell">
+                <span class="mc-field-label">Spell words</span>
+                <input type="text" id="minibia-copilot-rune-spell" placeholder="adori vita vis" />
+              </label>
+              <label class="mc-field" for="minibia-copilot-rune-mana">
+                <span class="mc-field-label">Mana per cast</span>
+                <input type="number" id="minibia-copilot-rune-mana" min="0" placeholder="600" />
+              </label>
+            </div>
+          </div>
+
+          <div class="mc-section">
+            <div class="mc-label">Talk (Chat AI)</div>
+            <div class="mc-stack">
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-talk-enabled" />
+                <span>Enable Auto Reply</span>
+              </label>
+              <label class="mc-field" for="minibia-copilot-talk-api-key">
+                <span class="mc-field-label">Gemini API key</span>
+                <input type="password" id="minibia-copilot-talk-api-key" placeholder="paste key" />
+              </label>
+              <label class="mc-field" for="minibia-copilot-talk-prompt">
+                <span class="mc-field-label">Reply style prompt</span>
+                <textarea id="minibia-copilot-talk-prompt" placeholder="e.g. terse, in-character"></textarea>
+              </label>
+              <div class="mc-small-note" id="minibia-copilot-talk-status">Status: idle</div>
+              <div class="mc-small-note">Replies only to the newest unseen message in Default chat. Won't admit it is a bot.</div>
+            </div>
+          </div>
+        </div>
+
       </div>
     `;
     document.body.appendChild(panel);
@@ -1748,6 +2008,14 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       refreshHomeLabel();
     });
 
+    panel.querySelectorAll(".mc-tab-button").forEach((button) => {
+      button.addEventListener("click", () => activateTab(button.dataset.tab));
+    });
+    const initialTab = bot.storage.get(tabStorageKey, defaultTab) || defaultTab;
+    activateTab(initialTab);
+    refreshPlayerSnapshot();
+    refreshStatusPillbar();
+
     refreshHomeLabel();
     refreshPanicStatus();
     refreshXrayStatus();
@@ -1791,6 +2059,14 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const magicWallStatusTimerId = window.setInterval(refreshMagicWallStatus, 1000);
     bot.addCleanup(() => {
       window.clearInterval(magicWallStatusTimerId);
+    });
+
+    const snapshotTimerId = window.setInterval(() => {
+      refreshPlayerSnapshot();
+      refreshStatusPillbar();
+    }, 1000);
+    bot.addCleanup(() => {
+      window.clearInterval(snapshotTimerId);
     });
   }
 
