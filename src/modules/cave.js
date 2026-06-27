@@ -1419,6 +1419,66 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     return false;
   }
 
+  function isReachableForMelee(monster, playerPosition) {
+    const pos = monster?.getPosition?.() || monster?.__position;
+    if (!pos || pos.z !== playerPosition.z) return false;
+
+    const offsets = [
+      { x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 },
+      { x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: 1, y: 1 },
+    ];
+
+    const pathfinder = window.gameClient?.world?.pathfinder;
+    const startTile = getTileAt(playerPosition);
+    if (!pathfinder || !startTile || typeof pathfinder.search !== "function") {
+      const dx = Math.abs(pos.x - playerPosition.x);
+      const dy = Math.abs(pos.y - playerPosition.y);
+      return Math.max(dx, dy) <= 1;
+    }
+
+    for (const offset of offsets) {
+      const tx = pos.x + offset.x;
+      const ty = pos.y + offset.y;
+      if (tx === playerPosition.x && ty === playerPosition.y) return true;
+      const tile = getTileAt({ x: tx, y: ty, z: pos.z });
+      if (!tile?.isWalkable?.()) continue;
+      try {
+        const path = pathfinder.search(startTile, tile);
+        if (Array.isArray(path) && path.length > 0) return true;
+      } catch (error) {}
+    }
+    return false;
+  }
+
+  function getReachableMonsterCount() {
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
+    if (!playerPosition) return 0;
+
+    const monsters = bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
+    if (!monsters.length) return 0;
+
+    const meleeMode = bot.attack?.config?.meleeMode !== false;
+    const maxRange = Math.max(1, Number(bot.attack?.config?.maxTargetDistance) || 8);
+    const playerId = window.gameClient?.player?.id;
+
+    let count = 0;
+    for (const monster of monsters) {
+      if (!monster) continue;
+      if (monster.masterId === playerId) continue;
+      const pos = monster.getPosition?.() || monster.__position;
+      if (!pos || pos.z !== playerPosition.z) continue;
+      const dist = Math.max(Math.abs(pos.x - playerPosition.x), Math.abs(pos.y - playerPosition.y));
+      if (dist > maxRange) continue;
+      if (meleeMode && !isReachableForMelee(monster, playerPosition)) continue;
+      count += 1;
+      if (count >= 1) {
+        // early exit only matters if we want a fast bool; keep counting up to a small cap
+        if (count >= 8) return count;
+      }
+    }
+    return count;
+  }
+
   function handleFloorChange(waypoint, now = Date.now()) {
     const position = normalizePosition(bot.getPlayerPosition());
     if (!position || !waypoint || position.z === waypoint.z) {
@@ -1519,8 +1579,10 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       const now = Date.now();
       const playerHasTarget = !!window.gameClient?.player?.__target;
       const attackStatus = bot.attack?.status?.() || null;
+      const reachableMonsters = getReachableMonsterCount();
       const shouldPauseForCombat =
         playerHasTarget ||
+        reachableMonsters > 0 ||
         (!!attackStatus?.combatActive && Number(attackStatus?.combatDurationMs || 0) < 60000);
 
       if (shouldPauseForCombat) {
@@ -1528,6 +1590,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
           state.pausedForCombat = true;
           bot.log("cave paused for combat", {
             playerHasTarget,
+            reachableMonsters,
             combatDurationMs: Number(attackStatus?.combatDurationMs || 0),
             targetCount: Number(attackStatus?.targetCount || 0),
           });
@@ -1539,7 +1602,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (state.pausedForCombat) {
         state.pausedForCombat = false;
         state.lastProgressAt = now;
-        bot.log("cave resumed after combat", {
+        bot.log("cave resumed after combat — no reachable monsters", {
           combatDurationMs: Number(attackStatus?.combatDurationMs || 0),
         });
       }

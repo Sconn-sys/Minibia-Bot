@@ -580,7 +580,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       return false;
     }
 
-    const giveUpDelayMs = Math.max(5000, (Number(config.tickMs) || 0) * 10);
+    const giveUpDelayMs = Math.max(2500, (Number(config.tickMs) || 0) * 5);
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
       state.lastChaseDestinationKey = null;
