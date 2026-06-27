@@ -384,6 +384,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     { key: "cave",        label: "Cave",   getRunning: () => !!bot.cave?.status?.().running },
     { key: "talk",        label: "Talk",   getRunning: () => !!bot.talk?.status?.().running },
     { key: "mw",          label: "MW",     getRunning: () => !!bot.magicWall?.status?.().running },
+    { key: "hunt",        label: "Hunt",   getRunning: () => !!bot.hunt?.status?.().lastInfo?.active },
   ];
 
   function activateTab(name) {
@@ -433,6 +434,83 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       return `<span class="mc-pill" data-active="${running ? "true" : "false"}">${def.label}</span>`;
     }).join("");
     container.innerHTML = html;
+  }
+
+  function formatNumber(value) {
+    if (value == null || !Number.isFinite(Number(value))) return "—";
+    const n = Number(value);
+    if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(2) + "M";
+    if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + "k";
+    return String(Math.round(n));
+  }
+
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+    if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+    return `${s}s`;
+  }
+
+  function refreshHuntStatus() {
+    const status = bot.hunt?.status?.();
+    const info = status?.lastInfo;
+    const statusLabel = document.getElementById("minibia-copilot-hunt-status");
+    const stats = document.getElementById("minibia-copilot-hunt-stats");
+    const topMonster = document.getElementById("minibia-copilot-hunt-top-monster");
+    const topLoot = document.getElementById("minibia-copilot-hunt-top-loot");
+    const autoPoll = document.getElementById("minibia-copilot-hunt-autopoll");
+
+    if (autoPoll && document.activeElement !== autoPoll) {
+      autoPoll.checked = !!status?.config?.autoPoll;
+    }
+
+    if (statusLabel) {
+      if (!info) {
+        statusLabel.textContent = "Status: no data (click Refresh)";
+      } else if (!info.active) {
+        statusLabel.textContent = "Status: no active session (click Start)";
+      } else if (info.paused) {
+        statusLabel.textContent = `Status: paused (${formatElapsed(info.elapsedMs)})`;
+      } else {
+        statusLabel.textContent = `Status: running (${formatElapsed(info.elapsedMs)})`;
+      }
+    }
+
+    if (stats) {
+      const shouldShow = !!info?.active;
+      stats.hidden = !shouldShow;
+      if (shouldShow) {
+        stats.querySelector('[data-key="elapsed"]').textContent = formatElapsed(info.elapsedMs);
+        stats.querySelector('[data-key="xpPerHour"]').textContent = formatNumber(info.xpPerHour);
+        stats.querySelector('[data-key="goldPerHour"]').textContent = formatNumber(info.goldPerHour);
+        stats.querySelector('[data-key="killsPerHour"]').textContent = formatNumber(info.killsPerHour);
+        stats.querySelector('[data-key="xp"]').textContent = formatNumber(info.xp);
+        stats.querySelector('[data-key="gold"]').textContent = formatNumber(info.gold);
+      }
+    }
+
+    if (topMonster) {
+      const monsters = Array.isArray(info?.monsters) ? info.monsters.slice().sort((a, b) => (b.count || 0) - (a.count || 0)) : [];
+      if (!monsters.length) {
+        topMonster.textContent = "Top kill: —";
+      } else {
+        const top3 = monsters.slice(0, 3).map((m) => `${m.name} ${formatNumber(m.count)}`).join(", ");
+        topMonster.textContent = `Top kills: ${top3}`;
+      }
+    }
+
+    if (topLoot) {
+      const loot = Array.isArray(info?.loot) ? info.loot.slice().sort((a, b) => (b.count || 0) - (a.count || 0)) : [];
+      if (!loot.length) {
+        topLoot.textContent = "Top loot: —";
+      } else {
+        const top3 = loot.slice(0, 3).map((l) => `${l.name} ${formatNumber(l.count)}`).join(", ");
+        topLoot.textContent = `Top loot: ${top3}`;
+      }
+    }
   }
 
   function refreshMagicWallStatus() {
@@ -927,6 +1005,32 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         color: #ffcf5a;
       }
 
+      #minibia-copilot-panel .mc-hunt-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      #minibia-copilot-panel .mc-hunt-grid[hidden] {
+        display: none !important;
+      }
+
+      #minibia-copilot-panel .mc-hunt-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid rgba(224, 200, 148, 0.12);
+      }
+
+      #minibia-copilot-panel .mc-hunt-cell > span:last-child {
+        color: #f7eccf;
+        font-weight: 700;
+        font-size: 12px;
+      }
+
       #minibia-copilot-panel .mc-actions {
         display: grid;
         gap: 6px;
@@ -1158,6 +1262,35 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
             <div class="mc-stat"><span class="mc-stat-label">HP</span><span class="mc-stat-value" data-tone="hp" id="minibia-copilot-snapshot-hp">—</span></div>
             <div class="mc-stat"><span class="mc-stat-label">Mana</span><span class="mc-stat-value" data-tone="mana" id="minibia-copilot-snapshot-mana">—</span></div>
             <div class="mc-stat"><span class="mc-stat-label">Lvl</span><span class="mc-stat-value" data-tone="lvl" id="minibia-copilot-snapshot-level">—</span></div>
+          </div>
+          <div class="mc-section">
+            <div class="mc-label">Hunt Analyzer</div>
+            <div class="mc-stack">
+              <div class="mc-small-note" id="minibia-copilot-hunt-status">Status: no session</div>
+              <div class="mc-hunt-grid" id="minibia-copilot-hunt-stats" hidden>
+                <div class="mc-hunt-cell"><span class="mc-field-label">Elapsed</span><span data-key="elapsed">—</span></div>
+                <div class="mc-hunt-cell"><span class="mc-field-label">XP / h</span><span data-key="xpPerHour">—</span></div>
+                <div class="mc-hunt-cell"><span class="mc-field-label">Gold / h</span><span data-key="goldPerHour">—</span></div>
+                <div class="mc-hunt-cell"><span class="mc-field-label">Kills / h</span><span data-key="killsPerHour">—</span></div>
+                <div class="mc-hunt-cell"><span class="mc-field-label">Total XP</span><span data-key="xp">—</span></div>
+                <div class="mc-hunt-cell"><span class="mc-field-label">Total Gold</span><span data-key="gold">—</span></div>
+              </div>
+              <div class="mc-small-note" id="minibia-copilot-hunt-top-monster">Top kill: —</div>
+              <div class="mc-small-note" id="minibia-copilot-hunt-top-loot">Top loot: —</div>
+              <label class="mc-toggle">
+                <input type="checkbox" id="minibia-copilot-hunt-autopoll" />
+                <span>Auto-refresh every 10s</span>
+              </label>
+              <div class="mc-actions mc-actions-inline-three">
+                <button type="button" class="mc-small-button" id="minibia-copilot-hunt-refresh">Refresh</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-hunt-start">Start</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-hunt-reset">Reset</button>
+              </div>
+              <div class="mc-actions mc-actions-inline-two">
+                <button type="button" class="mc-small-button" id="minibia-copilot-hunt-pause">Pause / Resume</button>
+                <button type="button" class="mc-small-button" id="minibia-copilot-hunt-stop">Stop</button>
+              </div>
+            </div>
           </div>
           <div class="mc-section">
             <div class="mc-label">X-Ray</div>
@@ -1474,6 +1607,12 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const magicWallAudioInput = panel.querySelector("#minibia-copilot-magic-wall-audio");
     const magicWallDurationInput = panel.querySelector("#minibia-copilot-magic-wall-duration");
     const magicWallLeadInput = panel.querySelector("#minibia-copilot-magic-wall-lead");
+    const huntRefreshButton = panel.querySelector("#minibia-copilot-hunt-refresh");
+    const huntStartButton = panel.querySelector("#minibia-copilot-hunt-start");
+    const huntStopButton = panel.querySelector("#minibia-copilot-hunt-stop");
+    const huntResetButton = panel.querySelector("#minibia-copilot-hunt-reset");
+    const huntPauseButton = panel.querySelector("#minibia-copilot-hunt-pause");
+    const huntAutoPollInput = panel.querySelector("#minibia-copilot-hunt-autopoll");
 
     if (collapseButton) {
       collapseButton.addEventListener("click", () => {
@@ -1732,6 +1871,48 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         const seconds = Math.max(0, Math.min(20, Number(magicWallLeadInput.value) || 3));
         bot.magicWall?.updateConfig?.({ flashLeadMs: seconds * 1000, audioLeadMs: seconds * 1000 });
         refreshMagicWallStatus();
+      });
+    }
+
+    if (huntRefreshButton) {
+      huntRefreshButton.addEventListener("click", () => {
+        bot.hunt?.refresh?.();
+        window.setTimeout(refreshHuntStatus, 300);
+      });
+    }
+    if (huntStartButton) {
+      huntStartButton.addEventListener("click", () => {
+        bot.hunt?.startSession?.();
+        window.setTimeout(refreshHuntStatus, 300);
+      });
+    }
+    if (huntStopButton) {
+      huntStopButton.addEventListener("click", () => {
+        bot.hunt?.stopSession?.();
+        window.setTimeout(refreshHuntStatus, 300);
+      });
+    }
+    if (huntResetButton) {
+      huntResetButton.addEventListener("click", () => {
+        bot.hunt?.resetSession?.();
+        window.setTimeout(refreshHuntStatus, 300);
+      });
+    }
+    if (huntPauseButton) {
+      huntPauseButton.addEventListener("click", () => {
+        const info = bot.hunt?.getLastInfo?.();
+        if (info?.paused) {
+          bot.hunt?.resumeSession?.();
+        } else {
+          bot.hunt?.pauseSession?.();
+        }
+        window.setTimeout(refreshHuntStatus, 300);
+      });
+    }
+    if (huntAutoPollInput) {
+      huntAutoPollInput.addEventListener("change", () => {
+        bot.hunt?.updateConfig?.({ autoPoll: huntAutoPollInput.checked });
+        refreshHuntStatus();
       });
     }
 
@@ -2031,6 +2212,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshEquipRingStatus();
     refreshTalkStatus();
     refreshMagicWallStatus();
+    refreshHuntStatus();
     refreshVisibleCreatures();
     refreshCavePresetControls();
     refreshCaveClosestStatus();
@@ -2064,6 +2246,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     const snapshotTimerId = window.setInterval(() => {
       refreshPlayerSnapshot();
       refreshStatusPillbar();
+      refreshHuntStatus();
     }, 1000);
     bot.addCleanup(() => {
       window.clearInterval(snapshotTimerId);
@@ -2087,6 +2270,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     refreshEquipRingStatus,
     refreshTalkStatus,
     refreshMagicWallStatus,
+    refreshHuntStatus,
     refreshVisibleCreatures,
     refreshCaveClosestStatus,
     refreshCaveTransitionStatus,
