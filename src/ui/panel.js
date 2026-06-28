@@ -803,7 +803,7 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     }
   }
 
-  function runFightSimulation() {
+  async function runFightSimulation() {
     const a = document.getElementById("minibia-copilot-fight-a")?.value?.trim();
     const b = document.getElementById("minibia-copilot-fight-b")?.value?.trim();
     const resultEl = document.getElementById("minibia-copilot-fight-result");
@@ -814,14 +814,21 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       return;
     }
 
-    const outcome = bot.fightEstimator?.simulate?.(a, b);
+    resultEl.hidden = false;
+    resultEl.innerHTML = '<div class="mc-fight-verdict">Simulating…</div><div class="mc-fight-status">Checking Minibia library and Tibia wiki for missing monsters…</div>';
+
+    let outcome;
+    try {
+      outcome = await bot.fightEstimator?.simulateAsync?.(a, b);
+    } catch (error) {
+      resultEl.innerHTML = `<div class="mc-fight-verdict">⚠ ${escapeHtml(error?.message || String(error))}</div>`;
+      return;
+    }
     if (!outcome) {
-      resultEl.hidden = false;
       resultEl.innerHTML = '<div class="mc-fight-verdict">Estimator not available.</div>';
       return;
     }
     if (outcome.error) {
-      resultEl.hidden = false;
       resultEl.innerHTML = `<div class="mc-fight-verdict">⚠ ${escapeHtml(outcome.error)}</div>`;
       return;
     }
@@ -837,9 +844,12 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       const isWinner = winnerKey === side;
       const isLoser = winnerKey !== "draw" && winnerKey !== side;
       const ttkText = snap.ttkOpponentSec != null ? `${snap.ttkOpponentSec}s` : "n/a";
+      const sourceBadge = snap.source === "wiki"
+        ? '<span style="font-size:9px;color:#9fb3c8;margin-left:6px;">[wiki]</span>'
+        : '<span style="font-size:9px;color:#8c7a52;margin-left:6px;">[library]</span>';
       return `
         <div class="mc-fight-card" ${isWinner ? 'data-winner="true"' : ""} ${isLoser ? 'data-loser="true"' : ""}>
-          <h4>${escapeHtml(snap.name)}</h4>
+          <h4>${escapeHtml(snap.name)}${sourceBadge}</h4>
           <dl>
             <dt>HP</dt><dd>${escapeHtml(snap.health)}</dd>
             <dt>Armor</dt><dd>${escapeHtml(snap.armor)}</dd>
