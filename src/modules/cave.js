@@ -70,7 +70,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       waypointTolerance: 0,
       idleSnapMs: 2000,
       monsterPauseRange: 10,
-      combatStallMs: 1500,
+      combatStallMs: 5000,
       enabled: false,
       activePresetName: defaultPresetName,
     },
@@ -1586,6 +1586,13 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       const positionKey = getPositionKey(position);
       const now = Date.now();
 
+      // Update movement tracker every tick — needed for the combat-stall
+      // failsafe below.
+      if (positionKey && positionKey !== state.lastPositionKey) {
+        state.lastPositionKey = positionKey;
+        state.lastProgressAt = now;
+      }
+
       const playerHasTarget = !!window.gameClient?.player?.__target;
       const attackStatus = bot.attack?.status?.() || null;
       const reachableMonsters = getReachableMonsterCount();
@@ -1594,10 +1601,19 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
         reachableMonsters > 0 ||
         (!!attackStatus?.combatActive && Number(attackStatus?.combatDurationMs || 0) < 60000);
 
-      // While ANY monster is on the battle list, cave stays parked. Auto-attack
-      // handles engaging them (including the "target too far" skip + cycle to
-      // the next entry). Cave only resumes when the screen is fully clear.
-      if (combatVisible) {
+      // While ANY monster is on the battle list, cave stays parked so
+      // auto-attack can engage them. BUT: if the player hasn't moved for
+      // combatStallMs (default 5s), it means auto-attack is in a
+      // skip/re-target loop on something it can't reach — force-resume so
+      // the bot doesn't get permanently stuck. Combat that's actually
+      // happening keeps moving the player (push from damage, diagonal
+      // step, etc.) and resets lastProgressAt, so legitimate fights
+      // don't trip this.
+      const combatStallMs = Math.max(2000, Math.min(15000, Number(config.combatStallMs) || 5000));
+      const stalledForMs = state.lastProgressAt ? (now - state.lastProgressAt) : 0;
+      const combatStalled = combatVisible && stalledForMs >= combatStallMs;
+
+      if (combatVisible && !combatStalled) {
         if (!state.pausedForCombat) {
           state.pausedForCombat = true;
           state.lastProgressAt = now;
@@ -1610,14 +1626,16 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
         return;
       }
 
-      if (state.pausedForCombat) {
-        state.pausedForCombat = false;
-        state.lastProgressAt = now;
-        bot.log("cave resumed — screen clear");
+      if (combatStalled) {
+        bot.log("cave failsafe — combat stuck " + Math.round(stalledForMs / 1000) + "s, resuming", {
+          reachableMonsters,
+          stalledForMs,
+        });
+        try { bot.attack?.clearSkipList?.(); } catch (error) {}
       }
 
-      if (positionKey && positionKey !== state.lastPositionKey) {
-        state.lastPositionKey = positionKey;
+      if (state.pausedForCombat) {
+        state.pausedForCombat = false;
         state.lastProgressAt = now;
       }
 

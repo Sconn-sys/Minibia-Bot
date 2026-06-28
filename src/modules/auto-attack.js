@@ -1038,7 +1038,15 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     return Array.isArray(config.targetPriority) ? config.targetPriority.slice() : [];
   }
 
+  function clearSkipList() {
+    state.skippedTargetIds.clear();
+    state.lastChaseStalledTargetId = null;
+    state.lastChaseProgressAt = 0;
+    return true;
+  }
+
   bot.attack = {
+    clearSkipList,
     start,
     stop,
     status,
