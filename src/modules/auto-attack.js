@@ -426,7 +426,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   function resetTargetIfTooFar() {
     const currentTarget = getCurrentTarget();
     if (currentTarget && shouldGiveUpTarget(currentTarget)) {
-      skipTarget(currentTarget, "target too far", Date.now(), 2500);
+      skipTarget(currentTarget, "target too far", Date.now(), 1500);
       bot.log("gave up distant auto attack target", {
         id: currentTarget.id,
         name: currentTarget.name || "Mob",
@@ -438,7 +438,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     const engagedTarget = getEngagedTarget();
     if (engagedTarget && shouldGiveUpTarget(engagedTarget)) {
-      skipTarget(engagedTarget, "engaged target too far", Date.now(), 2500);
+      skipTarget(engagedTarget, "engaged target too far", Date.now(), 1500);
       bot.log("gave up distant auto attack target", {
         id: engagedTarget.id,
         name: engagedTarget.name || "Mob",
@@ -648,6 +648,42 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     return true;
   }
 
+  function isOrthogonalAdjacent(from, to) {
+    if (!from || !to || from.z !== to.z) return false;
+    const dx = Math.abs(from.x - to.x);
+    const dy = Math.abs(from.y - to.y);
+    return (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+  }
+
+  function isDiagonalAdjacent(from, to) {
+    if (!from || !to || from.z !== to.z) return false;
+    const dx = Math.abs(from.x - to.x);
+    const dy = Math.abs(from.y - to.y);
+    return dx === 1 && dy === 1;
+  }
+
+  function findDiagonalTileNearTarget(playerPosition, targetPosition) {
+    if (typeof Position !== "function") return null;
+    const candidates = [
+      { x: targetPosition.x - 1, y: targetPosition.y - 1 },
+      { x: targetPosition.x + 1, y: targetPosition.y - 1 },
+      { x: targetPosition.x - 1, y: targetPosition.y + 1 },
+      { x: targetPosition.x + 1, y: targetPosition.y + 1 },
+    ];
+    candidates.sort((a, b) => {
+      const da = Math.abs(a.x - playerPosition.x) + Math.abs(a.y - playerPosition.y);
+      const db = Math.abs(b.x - playerPosition.x) + Math.abs(b.y - playerPosition.y);
+      return da - db;
+    });
+    for (const c of candidates) {
+      const tile = window.gameClient?.world?.getTileFromWorldPosition?.(
+        new Position(c.x, c.y, targetPosition.z)
+      );
+      if (tile?.isWalkable?.()) return c;
+    }
+    return null;
+  }
+
   function syncMeleeChase(now = Date.now()) {
     if (!config.meleeMode) return false;
     const target = getEngagedTarget();
@@ -660,11 +696,40 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const targetPosition = normalizePosition(target.getPosition?.() || target.__position);
     if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) return false;
 
-    if (isAdjacentTile(playerPosition, targetPosition)) {
+    if (isDiagonalAdjacent(playerPosition, targetPosition)) {
+      // Already in the sweet spot — clear follow so server stops walking us
+      // into the target, attack from here.
+      if (isSameCreature(getCurrentFollowTarget(), target)) {
+        clearCurrentFollowTarget();
+      }
       state.lastChaseProgressAt = now;
       state.lastChaseStalledTargetId = null;
-      setCurrentFollowTarget(target);
       return false;
+    }
+
+    if (isOrthogonalAdjacent(playerPosition, targetPosition)) {
+      // Orthogonally adjacent (N/S/E/W) — step to a diagonal tile so we can
+      // hit but the monster's melee can't always reach us.
+      const diagonalPos = findDiagonalTileNearTarget(playerPosition, targetPosition);
+      if (diagonalPos && (now - state.lastChaseAt > 300)) {
+        if (isSameCreature(getCurrentFollowTarget(), target)) {
+          clearCurrentFollowTarget();
+        }
+        try {
+          const pathfinder = window.gameClient?.world?.pathfinder;
+          if (pathfinder?.findPath) {
+            pathfinder.findPath(
+              new Position(playerPosition.x, playerPosition.y, playerPosition.z),
+              new Position(diagonalPos.x, diagonalPos.y, targetPosition.z)
+            );
+            state.lastChaseAt = now;
+            state.lastChaseProgressAt = now;
+          }
+        } catch (error) {
+          bot.log("diagonal step failed", { error: error?.message || error });
+        }
+      }
+      return true;
     }
 
     if (checkChaseStall(target, now)) return false;
