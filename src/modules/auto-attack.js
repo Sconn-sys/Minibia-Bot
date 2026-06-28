@@ -24,6 +24,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     "highest-hp",
     "lowest-hp",
     "cycle",
+    "priority",
   ]);
 
   const storedConfig = bot.storage.get(configStorageKey, {}) || {};
@@ -40,9 +41,13 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       targetingStrategy: "manual",
       safeDistance: 4,
       kitingEnabled: true,
+      targetPriority: [],
+      preemptPriority: true,
     },
     storedConfig
   );
+
+  if (!Array.isArray(config.targetPriority)) config.targetPriority = [];
   if (config.targetHotbarSlot == null && storedConfig.hotbarSlot != null) {
     config.targetHotbarSlot = storedConfig.hotbarSlot;
   }
@@ -323,13 +328,37 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     return !!target?.id && (state.skippedTargetIds.get(target.id) || 0) > now;
   }
 
+  function normalizeMonsterName(name) {
+    return String(name || "").trim().toLowerCase();
+  }
+
+  function getPriorityIndex(monster) {
+    if (!monster?.name) return Number.POSITIVE_INFINITY;
+    const list = Array.isArray(config.targetPriority) ? config.targetPriority : [];
+    if (!list.length) return Number.POSITIVE_INFINITY;
+    const lower = normalizeMonsterName(monster.name);
+    for (let index = 0; index < list.length; index += 1) {
+      if (normalizeMonsterName(list[index]) === lower) return index;
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+
+  function isPriorityMonster(monster) {
+    return Number.isFinite(getPriorityIndex(monster));
+  }
+
   function getMonsterCandidates(now = Date.now()) {
     pruneSkippedTargets(now);
 
     const playerPosition = normalizePosition(bot.getPlayerPosition());
+    const usePriority = String(config.targetingStrategy || "").toLowerCase() === "priority";
     return getNearbyMonsters()
       .filter((monster) => !isTargetSkipped(monster, now))
       .sort((left, right) => {
+        if (usePriority) {
+          const priorityDelta = getPriorityIndex(left) - getPriorityIndex(right);
+          if (priorityDelta !== 0) return priorityDelta;
+        }
         const leftDistance = getTileDistance(playerPosition, normalizePosition(left?.getPosition?.() || left?.__position));
         const rightDistance = getTileDistance(playerPosition, normalizePosition(right?.getPosition?.() || right?.__position));
         return leftDistance - rightDistance || Number(left?.id || 0) - Number(right?.id || 0);
@@ -641,7 +670,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const strategy = String(config.targetingStrategy || "manual").toLowerCase();
     const hasStrategy = strategy !== "manual" && validTargetingStrategies.has(strategy);
     const slot = normalizeHotbarSlot(config.targetHotbarSlot);
-    if (!hasStrategy && !slot) {
+    if (!hasStrategy && !slot && strategy !== "priority") {
       return false;
     }
 
@@ -662,8 +691,32 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     }
 
     const strategy = String(config.targetingStrategy || "manual").toLowerCase();
-    if (strategy !== "manual" && !getCurrentTarget()) {
+    if (strategy !== "manual" && strategy !== "priority" && !getCurrentTarget()) {
       if (tryTargetingStrategy(now)) return true;
+    }
+
+    if (strategy === "priority" && config.preemptPriority && getCurrentTarget()) {
+      const currentTarget = getCurrentTarget();
+      const currentPriority = getPriorityIndex(currentTarget);
+      const candidates = getMonsterCandidates(now);
+      const bestCandidate = candidates[0];
+      if (
+        bestCandidate &&
+        isPriorityMonster(bestCandidate) &&
+        getPriorityIndex(bestCandidate) < currentPriority &&
+        !isSameCreature(bestCandidate, currentTarget)
+      ) {
+        if (setCurrentTarget(bestCandidate)) {
+          state.lastTargetHotkeyAt = now;
+          markCombatActive(now);
+          bot.log("preempting to higher-priority target", {
+            from: currentTarget?.name || "Mob",
+            to: bestCandidate.name || "Mob",
+            priorityIndex: getPriorityIndex(bestCandidate),
+          });
+          return true;
+        }
+      }
     }
 
     const engagedTarget = getEngagedTarget();
@@ -877,6 +930,20 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       nextConfig.safeDistance = Math.max(1, Math.min(7, Math.trunc(Number(nextConfig.safeDistance) || config.safeDistance || 4)));
     }
 
+    if (Object.prototype.hasOwnProperty.call(nextConfig, "targetPriority")) {
+      const list = Array.isArray(nextConfig.targetPriority) ? nextConfig.targetPriority : [];
+      const seen = new Set();
+      nextConfig.targetPriority = [];
+      list.forEach((name) => {
+        const trimmed = String(name || "").trim();
+        const key = trimmed.toLowerCase();
+        if (trimmed && !seen.has(key)) {
+          seen.add(key);
+          nextConfig.targetPriority.push(trimmed);
+        }
+      });
+    }
+
     Object.assign(config, nextConfig);
     persistConfig();
     bot.log("auto attack config updated", { ...config });
@@ -890,6 +957,50 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   bot.addCleanup(() => {
     stop({ persistEnabled: false });
   });
+
+  function addPriorityTarget(name, index) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return false;
+    const key = trimmed.toLowerCase();
+    const list = Array.isArray(config.targetPriority) ? config.targetPriority.slice() : [];
+    if (list.some((existing) => existing.toLowerCase() === key)) return false;
+    if (Number.isFinite(Number(index))) {
+      const at = Math.max(0, Math.min(list.length, Math.trunc(Number(index))));
+      list.splice(at, 0, trimmed);
+    } else {
+      list.push(trimmed);
+    }
+    updateConfig({ targetPriority: list });
+    return true;
+  }
+
+  function removePriorityTarget(name) {
+    const key = String(name || "").trim().toLowerCase();
+    if (!key) return false;
+    const list = Array.isArray(config.targetPriority) ? config.targetPriority : [];
+    const next = list.filter((existing) => existing.toLowerCase() !== key);
+    if (next.length === list.length) return false;
+    updateConfig({ targetPriority: next });
+    return true;
+  }
+
+  function movePriorityTarget(name, delta) {
+    const key = String(name || "").trim().toLowerCase();
+    if (!key) return false;
+    const list = Array.isArray(config.targetPriority) ? config.targetPriority.slice() : [];
+    const current = list.findIndex((existing) => existing.toLowerCase() === key);
+    if (current < 0) return false;
+    const target = current + Number(delta);
+    if (target < 0 || target >= list.length || target === current) return false;
+    const [item] = list.splice(current, 1);
+    list.splice(target, 0, item);
+    updateConfig({ targetPriority: list });
+    return true;
+  }
+
+  function getPriorityTargets() {
+    return Array.isArray(config.targetPriority) ? config.targetPriority.slice() : [];
+  }
 
   bot.attack = {
     start,
@@ -907,6 +1018,10 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     isCombatActive,
     syncMeleeChase,
     normalizeHotbarSlot,
+    addPriorityTarget,
+    removePriorityTarget,
+    movePriorityTarget,
+    getPriorityTargets,
     config,
   };
 };

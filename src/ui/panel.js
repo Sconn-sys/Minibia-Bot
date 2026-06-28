@@ -878,6 +878,41 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
     `;
   }
 
+  function refreshAttackPriorityUI() {
+    const block = document.getElementById("minibia-copilot-attack-priority-block");
+    const list = document.getElementById("minibia-copilot-attack-priority-list");
+    const preemptInput = document.getElementById("minibia-copilot-attack-preempt");
+    const strategySelect = document.getElementById("minibia-copilot-auto-attack-strategy");
+
+    const strategy = String(bot.attack?.config?.targetingStrategy || "manual").toLowerCase();
+    if (block) block.hidden = strategy !== "priority";
+
+    if (strategySelect && document.activeElement !== strategySelect) {
+      strategySelect.value = strategy;
+    }
+
+    if (preemptInput && document.activeElement !== preemptInput) {
+      preemptInput.checked = bot.attack?.config?.preemptPriority !== false;
+    }
+
+    if (list) {
+      const names = bot.attack?.getPriorityTargets?.() || [];
+      if (!names.length) {
+        list.innerHTML = '<div class="mc-small-note">No priority targets yet. Add a monster name above.</div>';
+      } else {
+        list.innerHTML = names.map((name, index) => (
+          `<div class="mc-priority-row" data-name="${escapeHtml(name)}">` +
+            `<span class="mc-priority-rank">${index + 1}.</span>` +
+            `<span class="mc-priority-name">${escapeHtml(name)}</span>` +
+            `<button type="button" class="mc-small-button" data-attack-priority-up="${escapeHtml(name)}" title="Move up">↑</button>` +
+            `<button type="button" class="mc-small-button" data-attack-priority-down="${escapeHtml(name)}" title="Move down">↓</button>` +
+            `<button type="button" class="mc-small-button" data-attack-priority-remove="${escapeHtml(name)}" title="Remove">✕</button>` +
+          `</div>`
+        )).join("");
+      }
+    }
+  }
+
   function refreshAlphaWatchStatus() {
     const status = bot.alphaWatch?.status?.();
     if (!status) return;
@@ -1543,6 +1578,55 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
         font-size: 11px;
       }
 
+      #minibia-copilot-panel .mc-priority-block {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid rgba(224, 200, 148, 0.18);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.18);
+      }
+
+      #minibia-copilot-panel .mc-priority-block[hidden] {
+        display: none !important;
+      }
+
+      #minibia-copilot-panel #minibia-copilot-attack-priority-list {
+        max-height: 200px;
+        overflow-y: auto;
+        padding-right: 4px;
+        scrollbar-width: thin;
+      }
+
+      #minibia-copilot-panel .mc-priority-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        padding: 5px 8px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid rgba(224, 200, 148, 0.1);
+      }
+
+      #minibia-copilot-panel .mc-priority-row .mc-priority-rank {
+        color: #ffcf5a;
+        font-weight: 700;
+        min-width: 22px;
+      }
+
+      #minibia-copilot-panel .mc-priority-row .mc-priority-name {
+        flex: 1;
+        color: #f7eccf;
+        word-break: break-word;
+      }
+
+      #minibia-copilot-panel .mc-priority-row .mc-small-button {
+        padding: 3px 6px;
+        font-size: 11px;
+      }
+
       #minibia-copilot-tracker-toasts {
         position: fixed;
         z-index: 2147483645;
@@ -2108,8 +2192,22 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
                   <option value="highest-hp">Attack highest HP</option>
                   <option value="lowest-hp">Attack lowest HP</option>
                   <option value="cycle">Cycle target monster</option>
+                  <option value="priority">Priority list</option>
                 </select>
               </label>
+              <div class="mc-priority-block" id="minibia-copilot-attack-priority-block" hidden>
+                <div class="mc-field-label">Priority Targets (top = first)</div>
+                <div class="mc-inline">
+                  <input type="text" id="minibia-copilot-attack-priority-input" placeholder="Monster name" />
+                  <button type="button" class="mc-small-button" id="minibia-copilot-attack-priority-add">Add</button>
+                </div>
+                <div class="mc-list" id="minibia-copilot-attack-priority-list"></div>
+                <label class="mc-toggle">
+                  <input type="checkbox" id="minibia-copilot-attack-preempt" />
+                  <span>Switch to higher-priority mid-fight</span>
+                </label>
+                <div class="mc-small-note">Anything not in the list is attacked last (nearest first). Names are case-insensitive.</div>
+              </div>
               <div class="mc-field-grid">
                 <label class="mc-field" for="minibia-copilot-auto-attack-hotkey">
                   <span class="mc-field-label">Target Hotkey (1-12)</span>
@@ -3211,8 +3309,64 @@ window.__minibiaCopilotBundle.installPanel = function installPanel(bot) {
       autoAttackStrategyInput.value = String(bot.attack?.config?.targetingStrategy || "manual");
       autoAttackStrategyInput.addEventListener("change", () => {
         bot.attack.updateConfig({ targetingStrategy: autoAttackStrategyInput.value });
+        refreshAttackPriorityUI();
       });
     }
+
+    const attackPriorityInput = panel.querySelector("#minibia-copilot-attack-priority-input");
+    const attackPriorityAddButton = panel.querySelector("#minibia-copilot-attack-priority-add");
+    const attackPriorityList = panel.querySelector("#minibia-copilot-attack-priority-list");
+    const attackPreemptInput = panel.querySelector("#minibia-copilot-attack-preempt");
+
+    function addPriorityFromInput() {
+      const name = attackPriorityInput?.value?.trim() || "";
+      if (!name) return;
+      bot.attack?.addPriorityTarget?.(name);
+      if (attackPriorityInput) attackPriorityInput.value = "";
+      refreshAttackPriorityUI();
+    }
+
+    if (attackPriorityAddButton) {
+      attackPriorityAddButton.addEventListener("click", addPriorityFromInput);
+    }
+    if (attackPriorityInput) {
+      attackPriorityInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addPriorityFromInput();
+        }
+      });
+    }
+
+    if (attackPriorityList) {
+      attackPriorityList.addEventListener("click", (event) => {
+        const upTarget = event.target.closest("[data-attack-priority-up]");
+        if (upTarget) {
+          bot.attack?.movePriorityTarget?.(upTarget.getAttribute("data-attack-priority-up"), -1);
+          refreshAttackPriorityUI();
+          return;
+        }
+        const downTarget = event.target.closest("[data-attack-priority-down]");
+        if (downTarget) {
+          bot.attack?.movePriorityTarget?.(downTarget.getAttribute("data-attack-priority-down"), 1);
+          refreshAttackPriorityUI();
+          return;
+        }
+        const removeTarget = event.target.closest("[data-attack-priority-remove]");
+        if (removeTarget) {
+          bot.attack?.removePriorityTarget?.(removeTarget.getAttribute("data-attack-priority-remove"));
+          refreshAttackPriorityUI();
+        }
+      });
+    }
+
+    if (attackPreemptInput) {
+      attackPreemptInput.addEventListener("change", () => {
+        bot.attack?.updateConfig?.({ preemptPriority: attackPreemptInput.checked });
+      });
+    }
+
+    refreshAttackPriorityUI();
 
     if (autoAttackSafeDistanceInput) {
       autoAttackSafeDistanceInput.value = String(bot.attack?.config?.safeDistance ?? 4);
