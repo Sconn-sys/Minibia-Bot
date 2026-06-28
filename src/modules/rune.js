@@ -147,14 +147,33 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
 
   function castViaSpellbook(match) {
     const spellbook = window.gameClient?.player?.spellbook;
-    if (!spellbook || typeof spellbook.castSpell !== "function") return false;
+    if (!spellbook || typeof spellbook.castSpell !== "function") {
+      return { sent: false, reason: "spellbook unavailable" };
+    }
+
+    try {
+      if (spellbook.cooldowns?.has && typeof spellbook.__bucketFor === "function") {
+        const bucket = spellbook.__bucketFor(match.sid);
+        const sidOnCd = spellbook.cooldowns.has(match.sid);
+        const bucketOnCd = spellbook.cooldowns.has(bucket);
+        if (sidOnCd || bucketOnCd) {
+          return { sent: false, reason: `spell-cooldown (sid:${sidOnCd ? "yes" : "no"}, bucket:${bucketOnCd ? "yes" : "no"})` };
+        }
+      }
+    } catch (error) {}
+
+    const manaBefore = Number(window.gameClient?.player?.state?.mana);
+
     try {
       spellbook.castSpell(match.sid);
-      return true;
     } catch (error) {
-      bot.log("rune spellbook cast threw", { error: error?.message || error });
-      return false;
+      return { sent: false, reason: `castSpell threw: ${error?.message || error}` };
     }
+
+    const manaAfter = Number(window.gameClient?.player?.state?.mana);
+    const manaSpent = Number.isFinite(manaBefore) && Number.isFinite(manaAfter) ? manaBefore - manaAfter : null;
+
+    return { sent: true, manaBefore, manaAfter, manaSpent };
   }
 
   function castViaDefaultChannel(words) {
@@ -193,17 +212,32 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
     const match = findSpellByWords(config.runeSpellWords);
     let castOk = false;
     let path = "none";
+    let lastSkipReason = null;
+    let castDetail = null;
+
     if (match) {
-      castOk = castViaSpellbook(match);
-      path = castOk ? "spellbook" : "spellbook-failed";
+      const result = castViaSpellbook(match);
+      if (result.sent) {
+        castOk = true;
+        path = "spellbook";
+        castDetail = result;
+      } else {
+        lastSkipReason = result.reason;
+        path = "spellbook-blocked";
+      }
+    } else {
+      lastSkipReason = "spell words not in Interface.SPELLS";
     }
-    if (!castOk) {
-      castOk = castViaDefaultChannel(config.runeSpellWords);
-      if (castOk) path = "default-channel";
+
+    if (!castOk && lastSkipReason === "spellbook unavailable") {
+      const sent = castViaDefaultChannel(config.runeSpellWords);
+      if (sent) { castOk = true; path = "default-channel"; }
     }
-    if (!castOk) {
-      castOk = bot.sendChat(config.runeSpellWords);
-      if (castOk) path = "active-channel-fallback";
+
+    if (!castOk && !match) {
+      const sent = castViaDefaultChannel(config.runeSpellWords);
+      if (sent) { castOk = true; path = "default-channel"; }
+      else if (bot.sendChat(config.runeSpellWords)) { castOk = true; path = "active-channel-fallback"; }
     }
 
     if (castOk) {
@@ -213,12 +247,21 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
         spell: config.runeSpellWords,
         spellName: match?.spell?.name || "(custom)",
         path,
+        manaSpent: castDetail?.manaSpent ?? "?",
         sentSinceStart: state.sentSinceStart,
       });
     } else {
-      bot.log("rune cast failed — spellbook/channelManager unavailable", {
-        spell: config.runeSpellWords,
-      });
+      const reasonKey = "skip:" + (lastSkipReason || "unknown");
+      if (reasonKey !== state.lastGateReason || now - state.lastGateLoggedAt > 5000) {
+        state.lastGateReason = reasonKey;
+        state.lastGateLoggedAt = now;
+        bot.log("rune cast skipped", {
+          spell: config.runeSpellWords,
+          spellMatched: !!match,
+          spellName: match?.spell?.name || "(unknown)",
+          reason: lastSkipReason,
+        });
+      }
     }
 
     return castOk;
