@@ -12,15 +12,15 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
 
   const config = Object.assign(
     {
-      tickMs: 1000,
-      equipCooldownMs: 1500,
+      tickMs: 500,
+      equipCooldownMs: 600,
       enabled: false,
       amuletName: "stone skin amulet",
       autoSwap: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 1000;
+  config.tickMs = 500;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -253,7 +253,7 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     if (state.running) {
       bot.log("equip amulet already running");
@@ -297,7 +297,7 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
       nextConfig.amuletName = String(nextConfig.amuletName || "").trim();
     }
     Object.assign(config, nextConfig);
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     bot.log("equip amulet config updated", { ...config });
     return { ...config };

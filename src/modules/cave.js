@@ -58,22 +58,23 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   };
 
   const storedCaveConfig = bot.storage.get(configStorageKey, {}) || {};
-  if (storedCaveConfig.idleSnapMs === 10000) {
-    delete storedCaveConfig.idleSnapMs;
-  }
+  if (storedCaveConfig.idleSnapMs === 10000) delete storedCaveConfig.idleSnapMs;
+  if (storedCaveConfig.idleSnapMs === 3000) delete storedCaveConfig.idleSnapMs;
+  if (storedCaveConfig.tickMs === 500) delete storedCaveConfig.tickMs;
+  if (storedCaveConfig.repathMs === 1500) delete storedCaveConfig.repathMs;
+  if (storedCaveConfig.monsterPauseRange === 9) delete storedCaveConfig.monsterPauseRange;
   const config = Object.assign(
     {
-      tickMs: 500,
-      repathMs: 1500,
+      tickMs: 250,
+      repathMs: 600,
       waypointTolerance: 0,
-      idleSnapMs: 3000,
-      monsterPauseRange: 9,
+      idleSnapMs: 2000,
+      monsterPauseRange: 10,
       enabled: false,
       activePresetName: defaultPresetName,
     },
     storedCaveConfig
   );
-  config.tickMs = 500;
 
   function normalizePresetName(value) {
     const normalized = String(value || "").trim().replace(/\s+/g, " ");
@@ -1463,8 +1464,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     const monsters = bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
     if (!monsters.length) return 0;
 
-    const meleeMode = bot.attack?.config?.meleeMode !== false;
-    const pauseRange = Math.max(1, Number(config.monsterPauseRange) || 9);
+    const pauseRange = Math.max(1, Number(config.monsterPauseRange) || 10);
     const playerId = window.gameClient?.player?.id;
 
     let count = 0;
@@ -1475,7 +1475,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (!pos || pos.z !== playerPosition.z) continue;
       const dist = Math.max(Math.abs(pos.x - playerPosition.x), Math.abs(pos.y - playerPosition.y));
       if (dist > pauseRange) continue;
-      if (meleeMode && dist > 1 && !isReachableForMelee(monster, playerPosition)) continue;
       count += 1;
       if (count >= 8) return count;
     }
@@ -1596,6 +1595,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (shouldPauseForCombat) {
         if (!state.pausedForCombat) {
           state.pausedForCombat = true;
+          state.lastProgressAt = now;
           bot.log("cave paused for combat", {
             playerHasTarget,
             reachableMonsters,
@@ -1603,7 +1603,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
             targetCount: Number(attackStatus?.targetCount || 0),
           });
         }
-        state.lastProgressAt = now;
         return;
       }
 
@@ -1719,7 +1718,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 500;
     persistConfig();
 
     if (!route.length) {
@@ -1954,7 +1952,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
 
   function updateConfig(nextConfig = {}) {
     Object.assign(config, nextConfig);
-    config.tickMs = 500;
     persistConfig();
     bot.log("cave config updated", { ...config });
     return { ...config };

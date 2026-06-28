@@ -28,13 +28,16 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   ]);
 
   const storedConfig = bot.storage.get(configStorageKey, {}) || {};
+  if (storedConfig.tickMs === 500) delete storedConfig.tickMs;
+  if (storedConfig.targetCooldownMs === 1200) delete storedConfig.targetCooldownMs;
+  if (storedConfig.runeCooldownMs === 1200) delete storedConfig.runeCooldownMs;
   const config = Object.assign(
     {
-      tickMs: 500,
+      tickMs: 250,
       targetHotbarSlot: 3,
       runeHotbarSlot: null,
-      targetCooldownMs: 1200,
-      runeCooldownMs: 1200,
+      targetCooldownMs: 500,
+      runeCooldownMs: 500,
       maxTargetDistance: 8,
       meleeMode: true,
       enabled: false,
@@ -593,7 +596,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const currentDistance = getTileDistance(playerPosition, targetPosition);
     if (currentDistance >= desiredDistance) return false;
 
-    if (now - state.lastChaseAt < 600) return true;
+    if (now - state.lastChaseAt < 250) return true;
 
     const monsters = getNearbyMonsters();
     const fleeTo = findFleePosition(playerPosition, monsters, desiredDistance);
@@ -632,7 +635,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     // In the sweet spot (between kite distance and attack range) — do nothing.
     if (currentDistance <= attackRange && currentDistance >= safeDistance) return false;
     if (currentDistance < safeDistance) return false; // kite handles this
-    if (now - state.lastChaseAt < 600) return true;
+    if (now - state.lastChaseAt < 250) return true;
 
     if (setCurrentFollowTarget(target)) {
       state.lastChaseAt = now;
@@ -675,7 +678,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       return false;
     }
 
-    const giveUpDelayMs = Math.max(2500, (Number(config.tickMs) || 0) * 5);
+    const giveUpDelayMs = Math.max(1500, (Number(config.tickMs) || 0) * 5);
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
       state.lastChaseDestinationKey = null;

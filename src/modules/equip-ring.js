@@ -12,15 +12,15 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
   const config = Object.assign(
     {
-      tickMs: 1000,
-      equipCooldownMs: 1500,
+      tickMs: 500,
+      equipCooldownMs: 600,
       enabled: false,
       ringName: "",
       autoSwap: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 1000;
+  config.tickMs = 500;
 
   function normalizeRingName(value) {
     return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -285,7 +285,7 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
 
     if (state.running) {
@@ -334,7 +334,7 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
       nextConfig.ringName = String(nextConfig.ringName || "").trim();
     }
     Object.assign(config, nextConfig);
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     bot.log("equip ring config updated", { ...config });
     return { ...config };

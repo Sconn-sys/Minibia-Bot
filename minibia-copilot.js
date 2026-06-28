@@ -2295,14 +2295,14 @@ window.__minibiaCopilotBundle.installAutoInvisibleModule = function installAutoI
 
   const config = Object.assign(
     {
-      tickMs: 500,
+      tickMs: 250,
       spellWords: "utana vid",
-      recastCooldownMs: 2000,
+      recastCooldownMs: 1000,
       enabled: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 500;
+  config.tickMs = 250;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -2422,7 +2422,7 @@ window.__minibiaCopilotBundle.installAutoInvisibleModule = function installAutoI
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
 
     if (state.running) {
@@ -2476,7 +2476,7 @@ window.__minibiaCopilotBundle.installAutoInvisibleModule = function installAutoI
     }
 
     Object.assign(config, nextConfig);
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
     bot.log("auto invisible config updated", { ...config });
     return { ...config };
@@ -2512,14 +2512,14 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
 
   const config = Object.assign(
     {
-      tickMs: 500,
+      tickMs: 250,
       spellWords: "utamo vita",
-      recastCooldownMs: 2000,
+      recastCooldownMs: 1000,
       enabled: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 500;
+  config.tickMs = 250;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -2659,7 +2659,7 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
 
     if (state.running) {
@@ -2714,7 +2714,7 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
     }
 
     Object.assign(config, nextConfig);
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
     bot.log("auto magic shield config updated", { ...config });
     return { ...config };
@@ -2765,13 +2765,16 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   ]);
 
   const storedConfig = bot.storage.get(configStorageKey, {}) || {};
+  if (storedConfig.tickMs === 500) delete storedConfig.tickMs;
+  if (storedConfig.targetCooldownMs === 1200) delete storedConfig.targetCooldownMs;
+  if (storedConfig.runeCooldownMs === 1200) delete storedConfig.runeCooldownMs;
   const config = Object.assign(
     {
-      tickMs: 500,
+      tickMs: 250,
       targetHotbarSlot: 3,
       runeHotbarSlot: null,
-      targetCooldownMs: 1200,
-      runeCooldownMs: 1200,
+      targetCooldownMs: 500,
+      runeCooldownMs: 500,
       maxTargetDistance: 8,
       meleeMode: true,
       enabled: false,
@@ -3330,7 +3333,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const currentDistance = getTileDistance(playerPosition, targetPosition);
     if (currentDistance >= desiredDistance) return false;
 
-    if (now - state.lastChaseAt < 600) return true;
+    if (now - state.lastChaseAt < 250) return true;
 
     const monsters = getNearbyMonsters();
     const fleeTo = findFleePosition(playerPosition, monsters, desiredDistance);
@@ -3369,7 +3372,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     // In the sweet spot (between kite distance and attack range) — do nothing.
     if (currentDistance <= attackRange && currentDistance >= safeDistance) return false;
     if (currentDistance < safeDistance) return false; // kite handles this
-    if (now - state.lastChaseAt < 600) return true;
+    if (now - state.lastChaseAt < 250) return true;
 
     if (setCurrentFollowTarget(target)) {
       state.lastChaseAt = now;
@@ -3412,7 +3415,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       return false;
     }
 
-    const giveUpDelayMs = Math.max(2500, (Number(config.tickMs) || 0) * 5);
+    const giveUpDelayMs = Math.max(1500, (Number(config.tickMs) || 0) * 5);
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
       state.lastChaseDestinationKey = null;
@@ -3906,22 +3909,23 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   };
 
   const storedCaveConfig = bot.storage.get(configStorageKey, {}) || {};
-  if (storedCaveConfig.idleSnapMs === 10000) {
-    delete storedCaveConfig.idleSnapMs;
-  }
+  if (storedCaveConfig.idleSnapMs === 10000) delete storedCaveConfig.idleSnapMs;
+  if (storedCaveConfig.idleSnapMs === 3000) delete storedCaveConfig.idleSnapMs;
+  if (storedCaveConfig.tickMs === 500) delete storedCaveConfig.tickMs;
+  if (storedCaveConfig.repathMs === 1500) delete storedCaveConfig.repathMs;
+  if (storedCaveConfig.monsterPauseRange === 9) delete storedCaveConfig.monsterPauseRange;
   const config = Object.assign(
     {
-      tickMs: 500,
-      repathMs: 1500,
+      tickMs: 250,
+      repathMs: 600,
       waypointTolerance: 0,
-      idleSnapMs: 3000,
-      monsterPauseRange: 9,
+      idleSnapMs: 2000,
+      monsterPauseRange: 10,
       enabled: false,
       activePresetName: defaultPresetName,
     },
     storedCaveConfig
   );
-  config.tickMs = 500;
 
   function normalizePresetName(value) {
     const normalized = String(value || "").trim().replace(/\s+/g, " ");
@@ -5311,8 +5315,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     const monsters = bot.xray?.getVisibleMonsters?.({ sameFloorOnly: true }) || [];
     if (!monsters.length) return 0;
 
-    const meleeMode = bot.attack?.config?.meleeMode !== false;
-    const pauseRange = Math.max(1, Number(config.monsterPauseRange) || 9);
+    const pauseRange = Math.max(1, Number(config.monsterPauseRange) || 10);
     const playerId = window.gameClient?.player?.id;
 
     let count = 0;
@@ -5323,7 +5326,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (!pos || pos.z !== playerPosition.z) continue;
       const dist = Math.max(Math.abs(pos.x - playerPosition.x), Math.abs(pos.y - playerPosition.y));
       if (dist > pauseRange) continue;
-      if (meleeMode && dist > 1 && !isReachableForMelee(monster, playerPosition)) continue;
       count += 1;
       if (count >= 8) return count;
     }
@@ -5444,6 +5446,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (shouldPauseForCombat) {
         if (!state.pausedForCombat) {
           state.pausedForCombat = true;
+          state.lastProgressAt = now;
           bot.log("cave paused for combat", {
             playerHasTarget,
             reachableMonsters,
@@ -5451,7 +5454,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
             targetCount: Number(attackStatus?.targetCount || 0),
           });
         }
-        state.lastProgressAt = now;
         return;
       }
 
@@ -5567,7 +5569,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 500;
     persistConfig();
 
     if (!route.length) {
@@ -5802,7 +5803,6 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
 
   function updateConfig(nextConfig = {}) {
     Object.assign(config, nextConfig);
-    config.tickMs = 500;
     persistConfig();
     bot.log("cave config updated", { ...config });
     return { ...config };
@@ -5896,15 +5896,15 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
   const config = Object.assign(
     {
-      tickMs: 1000,
-      equipCooldownMs: 1500,
+      tickMs: 500,
+      equipCooldownMs: 600,
       enabled: false,
       ringName: "",
       autoSwap: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 1000;
+  config.tickMs = 500;
 
   function normalizeRingName(value) {
     return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -6169,7 +6169,7 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
 
     if (state.running) {
@@ -6218,7 +6218,7 @@ window.__minibiaCopilotBundle.installEquipRingModule = function installEquipRing
       nextConfig.ringName = String(nextConfig.ringName || "").trim();
     }
     Object.assign(config, nextConfig);
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     bot.log("equip ring config updated", { ...config });
     return { ...config };
@@ -6256,15 +6256,15 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
 
   const config = Object.assign(
     {
-      tickMs: 1000,
-      equipCooldownMs: 1500,
+      tickMs: 500,
+      equipCooldownMs: 600,
       enabled: false,
       amuletName: "stone skin amulet",
       autoSwap: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 1000;
+  config.tickMs = 500;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -6497,7 +6497,7 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     if (state.running) {
       bot.log("equip amulet already running");
@@ -6541,7 +6541,7 @@ window.__minibiaCopilotBundle.installEquipAmuletModule = function installEquipAm
       nextConfig.amuletName = String(nextConfig.amuletName || "").trim();
     }
     Object.assign(config, nextConfig);
-    config.tickMs = 1000;
+    config.tickMs = 500;
     persistConfig();
     bot.log("equip amulet config updated", { ...config });
     return { ...config };

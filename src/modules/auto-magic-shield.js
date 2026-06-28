@@ -13,14 +13,14 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
 
   const config = Object.assign(
     {
-      tickMs: 500,
+      tickMs: 250,
       spellWords: "utamo vita",
-      recastCooldownMs: 2000,
+      recastCooldownMs: 1000,
       enabled: false,
     },
     bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 500;
+  config.tickMs = 250;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
@@ -160,7 +160,7 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
 
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
 
     if (state.running) {
@@ -215,7 +215,7 @@ window.__minibiaCopilotBundle.installAutoMagicShieldModule = function installAut
     }
 
     Object.assign(config, nextConfig);
-    config.tickMs = 500;
+    config.tickMs = 250;
     persistConfig();
     bot.log("auto magic shield config updated", { ...config });
     return { ...config };
