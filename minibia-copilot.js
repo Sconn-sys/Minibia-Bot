@@ -2943,7 +2943,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       runeHotbarSlot: null,
       targetCooldownMs: 300,
       runeCooldownMs: 300,
-      maxTargetDistance: 10,
+      maxTargetDistance: 7,
       meleeMode: true,
       enabled: false,
       safeDistance: 4,
