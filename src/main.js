@@ -127,6 +127,7 @@
     const PAUSEABLE_MODULES = [
       "rune", "heal", "attack", "eat", "invisible", "magicShield",
       "equipRing", "equipAmulet", "talk", "lootbag",
+      "panic", "hunt", "magicWall", "alphaWatch", "tracker",
     ];
 
     bot.pauseAll = function pauseAll() {
