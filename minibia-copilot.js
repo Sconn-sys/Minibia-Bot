@@ -2932,15 +2932,18 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
   const storedConfig = bot.storage.get(configStorageKey, {}) || {};
   if (storedConfig.tickMs === 500) delete storedConfig.tickMs;
+  if (storedConfig.tickMs === 250) delete storedConfig.tickMs;
   if (storedConfig.targetCooldownMs === 1200) delete storedConfig.targetCooldownMs;
+  if (storedConfig.targetCooldownMs === 500) delete storedConfig.targetCooldownMs;
   if (storedConfig.runeCooldownMs === 1200) delete storedConfig.runeCooldownMs;
+  if (storedConfig.runeCooldownMs === 500) delete storedConfig.runeCooldownMs;
   const config = Object.assign(
     {
-      tickMs: 250,
+      tickMs: 150,
       targetHotbarSlot: 3,
       runeHotbarSlot: null,
-      targetCooldownMs: 500,
-      runeCooldownMs: 500,
+      targetCooldownMs: 300,
+      runeCooldownMs: 300,
       maxTargetDistance: 8,
       meleeMode: true,
       enabled: false,
@@ -3531,37 +3534,29 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const targetPosition = normalizePosition(target.getPosition?.() || target.__position);
     if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) return false;
 
-    const attackRange = Math.max(1, Math.min(8, Number(config.attackRange) || 5));
     const safeDistance = Math.max(1, Math.min(7, Number(config.safeDistance) || 4));
     const currentDistance = getTileDistance(playerPosition, targetPosition);
 
-    // In the sweet spot (between kite distance and attack range) — do nothing.
-    if (currentDistance <= attackRange && currentDistance >= safeDistance) return false;
-    if (currentDistance < safeDistance) return false; // kite handles this
-    if (now - state.lastChaseAt < 250) return true;
+    // Kite handles too-close situations and we don't want to override its flee path.
+    if (currentDistance < safeDistance) return false;
 
-    if (setCurrentFollowTarget(target)) {
-      state.lastChaseAt = now;
-      bot.log("ranged-chasing target", {
-        id: target.id,
-        name: target.name || "Mob",
-        distance: currentDistance,
-        attackRange,
-      });
-      return true;
+    // Lock follow to the engaged target. Server keeps walking us toward it
+    // without further packets, and won't keep restarting/oscillating like
+    // distance-toggled chase did. setCurrentFollowTarget short-circuits when
+    // we're already following this exact target, so we don't spam.
+    if (!isSameCreature(getCurrentFollowTarget(), target)) {
+      if (setCurrentFollowTarget(target)) {
+        state.lastChaseAt = now;
+        bot.log("ranged-chase: locked follow", {
+          id: target.id,
+          name: target.name || "Mob",
+          distance: currentDistance,
+        });
+        return true;
+      }
     }
 
-    try {
-      window.gameClient?.world?.pathfinder?.findPath?.(
-        new Position(playerPosition.x, playerPosition.y, playerPosition.z),
-        new Position(targetPosition.x, targetPosition.y, targetPosition.z)
-      );
-      state.lastChaseAt = now;
-      return true;
-    } catch (error) {
-      bot.log("ranged-chase path failed", { error: error?.message || error });
-      return false;
-    }
+    return false;
   }
 
   function syncMeleeChase(now = Date.now()) {
@@ -3581,7 +3576,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       return false;
     }
 
-    const giveUpDelayMs = Math.max(1500, (Number(config.tickMs) || 0) * 5);
+    const giveUpDelayMs = Math.max(1000, (Number(config.tickMs) || 0) * 6);
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
       state.lastChaseDestinationKey = null;
@@ -3672,33 +3667,40 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       const candidates = getMonsterCandidates(now);
       const bestCandidate = candidates[0];
       const playerPosition = normalizePosition(bot.getPlayerPosition());
+
       if (
         bestCandidate &&
         !isSameCreature(bestCandidate, currentTarget) &&
-        playerPosition &&
-        compareCandidatesByPriority(bestCandidate, currentTarget, playerPosition) < 0
+        playerPosition
       ) {
-        if (setCurrentTarget(bestCandidate)) {
-          state.lastTargetHotkeyAt = now;
-          markCombatActive(now);
-          const currentDistance = getTileDistance(
-            playerPosition,
-            normalizePosition(currentTarget?.getPosition?.() || currentTarget?.__position)
-          );
-          const bestDistance = getTileDistance(
-            playerPosition,
-            normalizePosition(bestCandidate?.getPosition?.() || bestCandidate?.__position)
-          );
-          const reason = bestDistance <= 1 && currentDistance > 1
-            ? "adjacent blocker"
-            : "higher priority";
-          bot.log("preempting target", {
-            from: currentTarget?.name || "Mob",
-            to: bestCandidate.name || "Mob",
-            reason,
-            priorityIndex: getPriorityIndex(bestCandidate),
-          });
-          return true;
+        const currentDistance = getTileDistance(
+          playerPosition,
+          normalizePosition(currentTarget?.getPosition?.() || currentTarget?.__position)
+        );
+        const bestDistance = getTileDistance(
+          playerPosition,
+          normalizePosition(bestCandidate?.getPosition?.() || bestCandidate?.__position)
+        );
+        const currentIsAdjacent = currentDistance <= 1;
+        const bestIsAdjacent = bestDistance <= 1;
+        const currentPriority = getPriorityIndex(currentTarget);
+        const bestPriority = getPriorityIndex(bestCandidate);
+
+        const adjacencyChange = bestIsAdjacent && !currentIsAdjacent;
+        const strictlyHigherPriority = bestPriority < currentPriority;
+
+        if (adjacencyChange || strictlyHigherPriority) {
+          if (setCurrentTarget(bestCandidate)) {
+            state.lastTargetHotkeyAt = now;
+            markCombatActive(now);
+            bot.log("preempting target", {
+              from: currentTarget?.name || "Mob",
+              to: bestCandidate.name || "Mob",
+              reason: adjacencyChange ? "adjacent blocker" : "higher priority",
+              priorityIndex: bestPriority,
+            });
+            return true;
+          }
         }
       }
     }
