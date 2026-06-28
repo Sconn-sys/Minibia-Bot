@@ -267,33 +267,111 @@ window.__minibiaCopilotBundle.createBot = function createBot() {
 
   const cancelMessageListeners = new Set();
   let cancelMessageHookInstalled = false;
-  let cancelMessageOriginal = null;
-  let cancelMessageTarget = null;
+  let cancelMessageInstallRetryId = null;
+  let patchedNotificationProto = null;
+  let originalNotificationCancel = null;
+  let patchedInterfaceProto = null;
+  let originalInterfaceCancel = null;
+
+  function fireCancelMessage(text) {
+    const value = typeof text === "string" ? text : String(text ?? "");
+    cancelMessageListeners.forEach((cb) => {
+      try { cb(value); } catch (error) {
+        console.error("[minibia-copilot] cancel-message listener failed", error);
+      }
+    });
+  }
+
+  function tryInstallCancelMessageHook() {
+    if (cancelMessageHookInstalled) return true;
+
+    // Prefer the prototype patch because the server packet handler calls
+    // NotificationManager.setCancelMessage directly, bypassing Interface.
+    let notificationProto = null;
+    try {
+      if (typeof NotificationManager !== "undefined" && NotificationManager?.prototype?.setCancelMessage) {
+        notificationProto = NotificationManager.prototype;
+      }
+    } catch (error) {}
+    if (!notificationProto) {
+      const live = window.gameClient?.interface?.notificationManager;
+      if (live) notificationProto = Object.getPrototypeOf(live);
+    }
+
+    let interfaceProto = null;
+    try {
+      if (typeof Interface !== "undefined" && Interface?.prototype?.setCancelMessage) {
+        interfaceProto = Interface.prototype;
+      }
+    } catch (error) {}
+    if (!interfaceProto) {
+      const live = window.gameClient?.interface;
+      if (live) interfaceProto = Object.getPrototypeOf(live);
+    }
+
+    if (notificationProto?.setCancelMessage) {
+      originalNotificationCancel = notificationProto.setCancelMessage;
+      patchedNotificationProto = notificationProto;
+      notificationProto.setCancelMessage = function patchedNotificationCancel(message) {
+        fireCancelMessage(message);
+        return originalNotificationCancel.apply(this, arguments);
+      };
+    }
+
+    if (interfaceProto?.setCancelMessage) {
+      originalInterfaceCancel = interfaceProto.setCancelMessage;
+      patchedInterfaceProto = interfaceProto;
+      interfaceProto.setCancelMessage = function patchedInterfaceCancel(message) {
+        // Fire here too in case the NotificationManager prototype wasn't
+        // available; downstream call will hit our notification patch
+        // and de-dup is fine because listeners just react/throttle.
+        if (!patchedNotificationProto) fireCancelMessage(message);
+        return originalInterfaceCancel.apply(this, arguments);
+      };
+    }
+
+    if (patchedNotificationProto || patchedInterfaceProto) {
+      cancelMessageHookInstalled = true;
+      console.log("[minibia-copilot] cancel-message hook installed", {
+        notificationProto: !!patchedNotificationProto,
+        interfaceProto: !!patchedInterfaceProto,
+      });
+      return true;
+    }
+    return false;
+  }
 
   function installCancelMessageHook() {
-    if (cancelMessageHookInstalled) return;
-    const iface = window.gameClient?.interface;
-    if (!iface || typeof iface.setCancelMessage !== "function") return;
-    cancelMessageOriginal = iface.setCancelMessage;
-    cancelMessageTarget = iface;
-    iface.setCancelMessage = function patchedSetCancelMessage(message) {
-      const text = typeof message === "string" ? message : String(message ?? "");
-      cancelMessageListeners.forEach((cb) => {
-        try { cb(text); } catch (error) { console.error("[minibia-copilot] cancel-message listener failed", error); }
-      });
-      return cancelMessageOriginal.apply(this, arguments);
-    };
-    cancelMessageHookInstalled = true;
+    if (tryInstallCancelMessageHook()) return;
+    if (cancelMessageInstallRetryId != null) return;
+    cancelMessageInstallRetryId = window.setInterval(() => {
+      if (tryInstallCancelMessageHook()) {
+        window.clearInterval(cancelMessageInstallRetryId);
+        cancelMessageInstallRetryId = null;
+      }
+    }, 1000);
   }
 
   function uninstallCancelMessageHook() {
-    if (!cancelMessageHookInstalled || !cancelMessageTarget || !cancelMessageOriginal) return;
-    if (cancelMessageTarget.setCancelMessage !== cancelMessageOriginal) {
-      cancelMessageTarget.setCancelMessage = cancelMessageOriginal;
+    if (cancelMessageInstallRetryId != null) {
+      window.clearInterval(cancelMessageInstallRetryId);
+      cancelMessageInstallRetryId = null;
+    }
+    if (patchedNotificationProto && originalNotificationCancel) {
+      if (patchedNotificationProto.setCancelMessage !== originalNotificationCancel) {
+        patchedNotificationProto.setCancelMessage = originalNotificationCancel;
+      }
+    }
+    if (patchedInterfaceProto && originalInterfaceCancel) {
+      if (patchedInterfaceProto.setCancelMessage !== originalInterfaceCancel) {
+        patchedInterfaceProto.setCancelMessage = originalInterfaceCancel;
+      }
     }
     cancelMessageHookInstalled = false;
-    cancelMessageOriginal = null;
-    cancelMessageTarget = null;
+    patchedNotificationProto = null;
+    originalNotificationCancel = null;
+    patchedInterfaceProto = null;
+    originalInterfaceCancel = null;
   }
 
   addCleanup(uninstallCancelMessageHook);
