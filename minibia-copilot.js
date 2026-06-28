@@ -2918,6 +2918,8 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     lastFollowDistance: Number.POSITIVE_INFINITY,
     lastFollowProgressAt: 0,
     lastFollowStallAt: 0,
+    lastFollowSentAt: 0,
+    lastFollowSentTargetId: null,
     skippedTargetIds: new Map(),
   };
 
@@ -3099,6 +3101,8 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     window.gameClient.player.setFollowTarget(null);
     window.gameClient.send(new FollowPacket(0));
+    state.lastFollowSentAt = 0;
+    state.lastFollowSentTargetId = null;
     return true;
   }
 
@@ -3197,12 +3201,21 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       return false;
     }
 
-    if (isSameCreature(getCurrentFollowTarget(), target)) {
+    const now = Date.now();
+    const targetId = target.id;
+    const isSameTarget = state.lastFollowSentTargetId === targetId;
+    if (isSameTarget && now - state.lastFollowSentAt < 500) {
       return true;
     }
 
     window.gameClient.player.setFollowTarget(target);
-    window.gameClient.send(new FollowPacket(target.id));
+    window.gameClient.send(new FollowPacket(targetId));
+    state.lastFollowSentAt = now;
+    state.lastFollowSentTargetId = targetId;
+
+    if (!isSameTarget) {
+      bot.log("follow target set", { id: targetId, name: target.name || "Mob" });
+    }
     return true;
   }
 
@@ -3540,23 +3553,12 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     // Kite handles too-close situations and we don't want to override its flee path.
     if (currentDistance < safeDistance) return false;
 
-    // Lock follow to the engaged target. Server keeps walking us toward it
-    // without further packets, and won't keep restarting/oscillating like
-    // distance-toggled chase did. setCurrentFollowTarget short-circuits when
-    // we're already following this exact target, so we don't spam.
-    if (!isSameCreature(getCurrentFollowTarget(), target)) {
-      if (setCurrentFollowTarget(target)) {
-        state.lastChaseAt = now;
-        bot.log("ranged-chase: locked follow", {
-          id: target.id,
-          name: target.name || "Mob",
-          distance: currentDistance,
-        });
-        return true;
-      }
-    }
-
-    return false;
+    // Always call setCurrentFollowTarget; its built-in throttle re-fires the
+    // FollowPacket every 500ms so the server keeps pursuing fleeing creatures
+    // even if it dropped the follow between updates.
+    setCurrentFollowTarget(target);
+    state.lastChaseAt = now;
+    return true;
   }
 
   function syncMeleeChase(now = Date.now()) {
@@ -3580,8 +3582,13 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
       state.lastChaseDestinationKey = null;
-      clearCurrentFollowTarget();
       resetFollowProgress();
+      // Keep follow set so the moment a fleeing archer/mage steps away,
+      // the server resumes walking us without waiting for the next tick
+      // to re-issue FollowPacket.
+      if (!isSameCreature(getCurrentFollowTarget(), target)) {
+        setCurrentFollowTarget(target);
+      }
       return false;
     }
 
