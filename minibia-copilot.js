@@ -5630,6 +5630,18 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
           state.direction = closestIndex >= route.length - 1 ? -1 : 1;
           if (route.length <= 1) state.direction = 1;
           state.lastPathAt = 0;
+        } else if (route.length > 1) {
+          // Snap says "you're already on the closest waypoint" yet we
+          // haven't moved in idleSnapMs — the pathfinder can't reach the
+          // current waypoint (closed door, blocked tile, isolated alcove).
+          // Force-advance past it so the route keeps going.
+          bot.log("cave idle failsafe: force-advancing past unreachable waypoint", {
+            fromIndex: state.currentIndex + 1,
+            total: route.length,
+            idleForMs: now - state.lastProgressAt,
+          });
+          advanceWaypoint();
+          state.lastPathAt = 0;
         }
         state.lastProgressAt = now;
       }
