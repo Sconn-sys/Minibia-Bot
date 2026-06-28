@@ -61,12 +61,14 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   if (storedCaveConfig.idleSnapMs === 10000) delete storedCaveConfig.idleSnapMs;
   if (storedCaveConfig.idleSnapMs === 3000) delete storedCaveConfig.idleSnapMs;
   if (storedCaveConfig.tickMs === 500) delete storedCaveConfig.tickMs;
+  if (storedCaveConfig.tickMs === 250) delete storedCaveConfig.tickMs;
   if (storedCaveConfig.repathMs === 1500) delete storedCaveConfig.repathMs;
+  if (storedCaveConfig.repathMs === 600) delete storedCaveConfig.repathMs;
   if (storedCaveConfig.monsterPauseRange === 9) delete storedCaveConfig.monsterPauseRange;
   const config = Object.assign(
     {
-      tickMs: 250,
-      repathMs: 600,
+      tickMs: 150,
+      repathMs: 400,
       waypointTolerance: 0,
       idleSnapMs: 2000,
       monsterPauseRange: 10,
@@ -1748,6 +1750,23 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     state.observerTimerId = null;
   }
 
+  function handleServerCancel(message) {
+    if (!state.running) return;
+    const lower = String(message || "").toLowerCase();
+    if (lower.includes("there is no way") || lower.includes("no way")) {
+      // Pathfinder told us the current waypoint is unreachable. Force-advance
+      // so the route keeps going.
+      if (route.length > 1) {
+        bot.log("cave reacted to 'no way' — advancing past unreachable waypoint", {
+          fromIndex: state.currentIndex + 1,
+        });
+        advanceWaypoint();
+        state.lastPathAt = 0;
+        state.lastProgressAt = Date.now();
+      }
+    }
+  }
+
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
     persistConfig();
@@ -1773,6 +1792,9 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     state.lastPositionKey = getPositionKey(position);
     state.lastProgressAt = Date.now();
     state.pausedForCombat = false;
+    if (!state.cancelMessageUnsubscribe && typeof bot.onCancelMessage === "function") {
+      state.cancelMessageUnsubscribe = bot.onCancelMessage(handleServerCancel);
+    }
     bot.log("cave bot started", {
       waypoints: route.length,
       currentIndex: state.currentIndex + 1,
@@ -1797,6 +1819,10 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       persistConfig();
     }
     state.pausedForCombat = false;
+    if (state.cancelMessageUnsubscribe) {
+      try { state.cancelMessageUnsubscribe(); } catch (error) {}
+      state.cancelMessageUnsubscribe = null;
+    }
     bot.log("cave bot stopped");
     return true;
   }

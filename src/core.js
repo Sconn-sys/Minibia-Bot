@@ -265,8 +265,47 @@ window.__minibiaCopilotBundle.createBot = function createBot() {
 
   startReconnectWatcher();
 
+  const cancelMessageListeners = new Set();
+  let cancelMessageHookInstalled = false;
+  let cancelMessageOriginal = null;
+  let cancelMessageTarget = null;
+
+  function installCancelMessageHook() {
+    if (cancelMessageHookInstalled) return;
+    const iface = window.gameClient?.interface;
+    if (!iface || typeof iface.setCancelMessage !== "function") return;
+    cancelMessageOriginal = iface.setCancelMessage;
+    cancelMessageTarget = iface;
+    iface.setCancelMessage = function patchedSetCancelMessage(message) {
+      const text = typeof message === "string" ? message : String(message ?? "");
+      cancelMessageListeners.forEach((cb) => {
+        try { cb(text); } catch (error) { console.error("[minibia-copilot] cancel-message listener failed", error); }
+      });
+      return cancelMessageOriginal.apply(this, arguments);
+    };
+    cancelMessageHookInstalled = true;
+  }
+
+  function uninstallCancelMessageHook() {
+    if (!cancelMessageHookInstalled || !cancelMessageTarget || !cancelMessageOriginal) return;
+    if (cancelMessageTarget.setCancelMessage !== cancelMessageOriginal) {
+      cancelMessageTarget.setCancelMessage = cancelMessageOriginal;
+    }
+    cancelMessageHookInstalled = false;
+    cancelMessageOriginal = null;
+    cancelMessageTarget = null;
+  }
+
+  addCleanup(uninstallCancelMessageHook);
+
   return {
     version: "0.3.0",
+    onCancelMessage(callback) {
+      if (typeof callback !== "function") return () => {};
+      cancelMessageListeners.add(callback);
+      installCancelMessageHook();
+      return () => cancelMessageListeners.delete(callback);
+    },
     addCleanup,
     destroy() {
       if (this.panic?.stop) {

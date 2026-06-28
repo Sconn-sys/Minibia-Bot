@@ -265,8 +265,47 @@ window.__minibiaCopilotBundle.createBot = function createBot() {
 
   startReconnectWatcher();
 
+  const cancelMessageListeners = new Set();
+  let cancelMessageHookInstalled = false;
+  let cancelMessageOriginal = null;
+  let cancelMessageTarget = null;
+
+  function installCancelMessageHook() {
+    if (cancelMessageHookInstalled) return;
+    const iface = window.gameClient?.interface;
+    if (!iface || typeof iface.setCancelMessage !== "function") return;
+    cancelMessageOriginal = iface.setCancelMessage;
+    cancelMessageTarget = iface;
+    iface.setCancelMessage = function patchedSetCancelMessage(message) {
+      const text = typeof message === "string" ? message : String(message ?? "");
+      cancelMessageListeners.forEach((cb) => {
+        try { cb(text); } catch (error) { console.error("[minibia-copilot] cancel-message listener failed", error); }
+      });
+      return cancelMessageOriginal.apply(this, arguments);
+    };
+    cancelMessageHookInstalled = true;
+  }
+
+  function uninstallCancelMessageHook() {
+    if (!cancelMessageHookInstalled || !cancelMessageTarget || !cancelMessageOriginal) return;
+    if (cancelMessageTarget.setCancelMessage !== cancelMessageOriginal) {
+      cancelMessageTarget.setCancelMessage = cancelMessageOriginal;
+    }
+    cancelMessageHookInstalled = false;
+    cancelMessageOriginal = null;
+    cancelMessageTarget = null;
+  }
+
+  addCleanup(uninstallCancelMessageHook);
+
   return {
     version: "0.3.0",
+    onCancelMessage(callback) {
+      if (typeof callback !== "function") return () => {};
+      cancelMessageListeners.add(callback);
+      installCancelMessageHook();
+      return () => cancelMessageListeners.delete(callback);
+    },
     addCleanup,
     destroy() {
       if (this.panic?.stop) {
@@ -2937,12 +2976,15 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   delete storedConfig.preemptPriority;
   delete storedConfig.attackRange;
   delete storedConfig.chaseInNonMelee;
+  if (storedConfig.tickMs === 150) delete storedConfig.tickMs;
+  if (storedConfig.targetCooldownMs === 300) delete storedConfig.targetCooldownMs;
+  if (storedConfig.runeCooldownMs === 300) delete storedConfig.runeCooldownMs;
   const config = Object.assign(
     {
-      tickMs: 150,
+      tickMs: 100,
       runeHotbarSlot: null,
-      targetCooldownMs: 300,
-      runeCooldownMs: 300,
+      targetCooldownMs: 200,
+      runeCooldownMs: 250,
       maxTargetDistance: 7,
       meleeMode: true,
       enabled: false,
@@ -3216,7 +3258,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const now = Date.now();
     const targetId = target.id;
     const isSameTarget = state.lastFollowSentTargetId === targetId;
-    if (isSameTarget && now - state.lastFollowSentAt < 500) {
+    if (isSameTarget && now - state.lastFollowSentAt < 350) {
       return true;
     }
 
@@ -3329,7 +3371,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
   function resetTargetIfTooFar() {
     const currentTarget = getCurrentTarget();
     if (currentTarget && shouldGiveUpTarget(currentTarget)) {
-      skipTarget(currentTarget, "target too far", Date.now(), 1500);
+      skipTarget(currentTarget, "target too far", Date.now(), 800);
       bot.log("gave up distant auto attack target", {
         id: currentTarget.id,
         name: currentTarget.name || "Mob",
@@ -3341,7 +3383,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     const engagedTarget = getEngagedTarget();
     if (engagedTarget && shouldGiveUpTarget(engagedTarget)) {
-      skipTarget(engagedTarget, "engaged target too far", Date.now(), 1500);
+      skipTarget(engagedTarget, "engaged target too far", Date.now(), 800);
       bot.log("gave up distant auto attack target", {
         id: engagedTarget.id,
         name: engagedTarget.name || "Mob",
@@ -3483,7 +3525,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const currentDistance = getTileDistance(playerPosition, targetPosition);
     if (currentDistance >= desiredDistance) return false;
 
-    if (now - state.lastChaseAt < 250) return true;
+    if (now - state.lastChaseAt < 150) return true;
 
     const monsters = getNearbyMonsters();
     const fleeTo = findFleePosition(playerPosition, monsters, desiredDistance);
@@ -3543,7 +3585,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
       state.lastChaseProgressAt = now;
       return false;
     }
-    if (now - state.lastChaseProgressAt < 2000) return false;
+    if (now - state.lastChaseProgressAt < 1500) return false;
     if (state.lastChaseStalledTargetId === target.id) return false;
     state.lastChaseStalledTargetId = target.id;
     bot.log("chase stalled 2s, dropping target", { id: target.id, name: target.name || "Mob" });
@@ -3788,6 +3830,41 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     }
   }
 
+  function handleServerCancel(message) {
+    if (!state.running) return;
+    const lower = String(message || "").toLowerCase();
+    const target = getCurrentTarget() || getEngagedTarget();
+
+    if (lower.includes("too far")) {
+      if (target) {
+        skipTarget(target, "server: too far", Date.now(), 2000);
+        bot.log("auto-attack reacted to 'too far' — skipping target", { name: target.name || "Mob" });
+      }
+      return;
+    }
+    if (lower.includes("there is no way") || lower.includes("no way")) {
+      if (target) {
+        skipTarget(target, "server: no path", Date.now(), 3000);
+        bot.log("auto-attack reacted to 'no way' — skipping unreachable target", { name: target.name || "Mob" });
+      }
+      return;
+    }
+    if (lower.includes("you cannot attack")) {
+      if (target) {
+        skipTarget(target, "server: cannot attack", Date.now(), 4000);
+        bot.log("auto-attack reacted to 'cannot attack' — skipping target", { name: target.name || "Mob" });
+      }
+      return;
+    }
+    if (lower.includes("target lost")) {
+      clearEngagedTarget();
+      clearCurrentTarget();
+      clearCurrentFollowTarget();
+      bot.log("auto-attack reacted to 'target lost' — clearing");
+      return;
+    }
+  }
+
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
     persistConfig();
@@ -3798,6 +3875,9 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     }
 
     state.running = true;
+    if (!state.cancelMessageUnsubscribe && typeof bot.onCancelMessage === "function") {
+      state.cancelMessageUnsubscribe = bot.onCancelMessage(handleServerCancel);
+    }
     bot.log("auto attack started", { ...config });
     tick();
     return true;
@@ -3821,6 +3901,11 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     state.lastChaseAt = 0;
     clearCurrentFollowTarget();
     state.skippedTargetIds.clear();
+
+    if (state.cancelMessageUnsubscribe) {
+      try { state.cancelMessageUnsubscribe(); } catch (error) {}
+      state.cancelMessageUnsubscribe = null;
+    }
 
     bot.log("auto attack stopped");
     return true;
@@ -4035,12 +4120,14 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
   if (storedCaveConfig.idleSnapMs === 10000) delete storedCaveConfig.idleSnapMs;
   if (storedCaveConfig.idleSnapMs === 3000) delete storedCaveConfig.idleSnapMs;
   if (storedCaveConfig.tickMs === 500) delete storedCaveConfig.tickMs;
+  if (storedCaveConfig.tickMs === 250) delete storedCaveConfig.tickMs;
   if (storedCaveConfig.repathMs === 1500) delete storedCaveConfig.repathMs;
+  if (storedCaveConfig.repathMs === 600) delete storedCaveConfig.repathMs;
   if (storedCaveConfig.monsterPauseRange === 9) delete storedCaveConfig.monsterPauseRange;
   const config = Object.assign(
     {
-      tickMs: 250,
-      repathMs: 600,
+      tickMs: 150,
+      repathMs: 400,
       waypointTolerance: 0,
       idleSnapMs: 2000,
       monsterPauseRange: 10,
@@ -5722,6 +5809,23 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     state.observerTimerId = null;
   }
 
+  function handleServerCancel(message) {
+    if (!state.running) return;
+    const lower = String(message || "").toLowerCase();
+    if (lower.includes("there is no way") || lower.includes("no way")) {
+      // Pathfinder told us the current waypoint is unreachable. Force-advance
+      // so the route keeps going.
+      if (route.length > 1) {
+        bot.log("cave reacted to 'no way' — advancing past unreachable waypoint", {
+          fromIndex: state.currentIndex + 1,
+        });
+        advanceWaypoint();
+        state.lastPathAt = 0;
+        state.lastProgressAt = Date.now();
+      }
+    }
+  }
+
   function start(overrides = {}) {
     Object.assign(config, overrides, { enabled: true });
     persistConfig();
@@ -5747,6 +5851,9 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     state.lastPositionKey = getPositionKey(position);
     state.lastProgressAt = Date.now();
     state.pausedForCombat = false;
+    if (!state.cancelMessageUnsubscribe && typeof bot.onCancelMessage === "function") {
+      state.cancelMessageUnsubscribe = bot.onCancelMessage(handleServerCancel);
+    }
     bot.log("cave bot started", {
       waypoints: route.length,
       currentIndex: state.currentIndex + 1,
@@ -5771,6 +5878,10 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       persistConfig();
     }
     state.pausedForCombat = false;
+    if (state.cancelMessageUnsubscribe) {
+      try { state.cancelMessageUnsubscribe(); } catch (error) {}
+      state.cancelMessageUnsubscribe = null;
+    }
     bot.log("cave bot stopped");
     return true;
   }
