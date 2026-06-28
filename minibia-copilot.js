@@ -3817,16 +3817,21 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     timerId: null,
   };
 
+  const storedCaveConfig = bot.storage.get(configStorageKey, {}) || {};
+  if (storedCaveConfig.idleSnapMs === 10000) {
+    delete storedCaveConfig.idleSnapMs;
+  }
   const config = Object.assign(
     {
       tickMs: 500,
       repathMs: 1500,
       waypointTolerance: 0,
-      idleSnapMs: 10000,
+      idleSnapMs: 3000,
+      monsterPauseRange: 9,
       enabled: false,
       activePresetName: defaultPresetName,
     },
-    bot.storage.get(configStorageKey, {})
+    storedCaveConfig
   );
   config.tickMs = 500;
 
@@ -5219,7 +5224,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
     if (!monsters.length) return 0;
 
     const meleeMode = bot.attack?.config?.meleeMode !== false;
-    const maxRange = Math.max(1, Number(bot.attack?.config?.maxTargetDistance) || 8);
+    const pauseRange = Math.max(1, Number(config.monsterPauseRange) || 9);
     const playerId = window.gameClient?.player?.id;
 
     let count = 0;
@@ -5229,13 +5234,10 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       const pos = monster.getPosition?.() || monster.__position;
       if (!pos || pos.z !== playerPosition.z) continue;
       const dist = Math.max(Math.abs(pos.x - playerPosition.x), Math.abs(pos.y - playerPosition.y));
-      if (dist > maxRange) continue;
-      if (meleeMode && !isReachableForMelee(monster, playerPosition)) continue;
+      if (dist > pauseRange) continue;
+      if (meleeMode && dist > 1 && !isReachableForMelee(monster, playerPosition)) continue;
       count += 1;
-      if (count >= 1) {
-        // early exit only matters if we want a fast bool; keep counting up to a small cap
-        if (count >= 8) return count;
-      }
+      if (count >= 8) return count;
     }
     return count;
   }
