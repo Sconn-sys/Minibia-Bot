@@ -2920,6 +2920,9 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     lastFollowStallAt: 0,
     lastFollowSentAt: 0,
     lastFollowSentTargetId: null,
+    lastChasePlayerPosKey: null,
+    lastChaseProgressAt: 0,
+    lastChaseStalledTargetId: null,
     skippedTargetIds: new Map(),
   };
 
@@ -3493,39 +3496,44 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const targetPosition = normalizePosition(target.getPosition?.() || target.__position);
     if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) return false;
 
-    const attackRange = Math.max(1, Math.min(8, Number(config.attackRange) || 5));
-    const safeDistance = Math.max(1, Math.min(7, Number(config.safeDistance) || 4));
-    const currentDistance = getTileDistance(playerPosition, targetPosition);
-
-    // Kite handles too-close situations and we don't want to override its flee path.
-    if (currentDistance < safeDistance) return false;
-
-    // Out of range — chase. Hysteresis (attackRange + 1) prevents 1-tile
-    // toggling at the boundary.
-    if (currentDistance > attackRange + 1) {
-      setCurrentFollowTarget(target);
-      state.lastChaseAt = now;
-      return true;
+    // Kite (if enabled) handles too-close case via its own pathfind packet.
+    if (config.kitingEnabled) {
+      const safeDistance = Math.max(1, Math.min(7, Number(config.safeDistance) || 4));
+      const currentDistance = getTileDistance(playerPosition, targetPosition);
+      if (currentDistance < safeDistance) return false;
     }
 
-    // In attack range — stop walking so weapon/spell can fire. If we were
-    // following this target, drop follow so the server stops walking us into it.
-    if (currentDistance <= attackRange) {
-      if (isSameCreature(getCurrentFollowTarget(), target)) {
-        clearCurrentFollowTarget();
-      }
+    if (checkChaseStall(target, now)) return false;
+
+    setCurrentFollowTarget(target);
+    state.lastChaseAt = now;
+    return true;
+  }
+
+  function checkChaseStall(target, now) {
+    const playerPosition = normalizePosition(bot.getPlayerPosition());
+    if (!playerPosition) return false;
+    const posKey = `${playerPosition.x},${playerPosition.y}`;
+    if (posKey !== state.lastChasePlayerPosKey) {
+      state.lastChasePlayerPosKey = posKey;
+      state.lastChaseProgressAt = now;
+      state.lastChaseStalledTargetId = null;
       return false;
     }
-
-    // In the hysteresis band — keep whatever state we have.
-    return false;
+    if (!state.lastChaseProgressAt) {
+      state.lastChaseProgressAt = now;
+      return false;
+    }
+    if (now - state.lastChaseProgressAt < 2000) return false;
+    if (state.lastChaseStalledTargetId === target.id) return false;
+    state.lastChaseStalledTargetId = target.id;
+    bot.log("chase stalled 2s, dropping target", { id: target.id, name: target.name || "Mob" });
+    skipTarget(target, "chase stalled 2s", now, 1500);
+    return true;
   }
 
   function syncMeleeChase(now = Date.now()) {
-    if (!config.meleeMode) {
-      return false;
-    }
-
+    if (!config.meleeMode) return false;
     const target = getEngagedTarget();
     if (!target) {
       clearEngagedTarget();
@@ -3534,70 +3542,20 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     const playerPosition = normalizePosition(bot.getPlayerPosition());
     const targetPosition = normalizePosition(target.getPosition?.() || target.__position);
-    if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) {
-      return false;
-    }
-
-    const giveUpDelayMs = Math.max(1000, (Number(config.tickMs) || 0) * 6);
+    if (!playerPosition || !targetPosition || playerPosition.z !== targetPosition.z) return false;
 
     if (isAdjacentTile(playerPosition, targetPosition)) {
-      state.lastChaseDestinationKey = null;
-      resetFollowProgress();
-      // Keep follow set so the moment a fleeing archer/mage steps away,
-      // the server resumes walking us without waiting for the next tick
-      // to re-issue FollowPacket.
-      if (!isSameCreature(getCurrentFollowTarget(), target)) {
-        setCurrentFollowTarget(target);
-      }
+      state.lastChaseProgressAt = now;
+      state.lastChaseStalledTargetId = null;
+      setCurrentFollowTarget(target);
       return false;
     }
 
-    const adjacentPosition = findReachableAdjacentPosition(targetPosition, playerPosition);
-    if (!adjacentPosition) {
-      if (!state.lastFollowStallAt) {
-        state.lastFollowStallAt = now;
-        return false;
-      }
+    if (checkChaseStall(target, now)) return false;
 
-      if (now - state.lastFollowStallAt > giveUpDelayMs) {
-        return skipTarget(target, "no reachable adjacent tile", now);
-      }
-
-      return false;
-    }
-
-    const currentDistance = getTileDistance(playerPosition, targetPosition);
-    if (state.lastFollowTargetId !== target.id) {
-      state.lastFollowTargetId = target.id;
-      state.lastFollowDistance = currentDistance;
-      state.lastFollowProgressAt = now;
-      state.lastFollowStallAt = 0;
-    } else if (currentDistance < state.lastFollowDistance) {
-      state.lastFollowDistance = currentDistance;
-      state.lastFollowProgressAt = now;
-      state.lastFollowStallAt = 0;
-    }
-
-    const followed = setCurrentFollowTarget(target);
-    if (followed) {
-      state.lastChaseAt = now;
-      state.lastChaseDestinationKey = getPositionKey(adjacentPosition);
-      bot.log("following auto attack target", {
-        id: target.id,
-        name: target.name || "Mob",
-        followTargetId: target.id,
-      });
-    }
-
-    if (state.lastFollowDistance <= currentDistance) {
-      if (!state.lastFollowStallAt) {
-        state.lastFollowStallAt = now;
-      } else if (now - state.lastFollowStallAt > giveUpDelayMs) {
-        return skipTarget(target, "follow made no progress", now);
-      }
-    }
-
-    return followed;
+    setCurrentFollowTarget(target);
+    state.lastChaseAt = now;
+    return true;
   }
 
   function canAttack(now = Date.now()) {
