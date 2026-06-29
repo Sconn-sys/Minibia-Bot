@@ -1842,44 +1842,40 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
   const state = {
     running: false,
     timerId: null,
+    autoEatRunning: false,
+    autoEatTimerId: null,
     lastRuneAt: 0,
-    lastGateReason: null,
-    lastGateLoggedAt: 0,
-    sentSinceStart: 0,
+    lastFoodAt: 0,
   };
-  let resumeListenersAttached = false;
 
-  const storedRuneConfig = bot.storage.get(configStorageKey, {}) || {};
-  if (storedRuneConfig.minHpPercent === 50) delete storedRuneConfig.minHpPercent;
-  if (storedRuneConfig.runeManaCost === 600) delete storedRuneConfig.runeManaCost;
-  if (storedRuneConfig.minFoodSeconds === 30) delete storedRuneConfig.minFoodSeconds;
   const config = Object.assign(
     {
-      tickMs: 250,
-      minHpPercent: 30,
-      minFoodSeconds: 5,
+      tickMs: 1000,
+      minHpPercent: 50,
+      minFoodSeconds: 30,
+      autoEatEnabled: false,
+      eatHotbarSlot: 10,
+      eatCooldownMs: 60000,
       runeSpellWords: "adori vita vis",
-      runeManaCost: 100,
+      runeManaCost: 600,
       runeCooldownMs: 3500,
-      enabled: false,
     },
-    storedRuneConfig
+    bot.storage.get(configStorageKey, {})
   );
-  config.tickMs = 250;
 
   function persistConfig() {
     bot.storage.set(configStorageKey, { ...config });
   }
 
   function readStats() {
-    const playerState = bot.getPlayerState();
+    const state = bot.getPlayerState();
 
-    const hp = playerState
-      ? { current: playerState.health ?? 0, max: playerState.maxHealth ?? 0 }
+    const hp = state
+      ? { current: state.health ?? 0, max: state.maxHealth ?? 0 }
       : null;
 
-    const mana = playerState
-      ? { current: playerState.mana ?? 0, max: playerState.maxMana ?? 0 }
+    const mana = state
+      ? { current: state.mana ?? 0, max: state.maxMana ?? 0 }
       : null;
 
     const foodText =
@@ -1900,293 +1896,221 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
     return { hp, mana, food };
   }
 
-  function getGateStatus(now = Date.now()) {
+  function canMakeRune() {
     const { hp, mana, food } = readStats();
-    if (!hp || !mana) {
-      return {
-        hasStats: false,
-        enoughHp: false,
-        enoughMana: false,
-        enoughFood: false,
-        cooldownReady: false,
-        cooldownRemainingMs: config.runeCooldownMs,
-        canMakeRune: false,
-      };
-    }
+    if (!hp || !mana) return false;
 
     const hpPercent = hp.max > 0 ? (hp.current / hp.max) * 100 : 0;
     const enoughHp = hpPercent >= config.minHpPercent;
     const enoughMana = mana.current >= config.runeManaCost;
     const enoughFood = food?.seconds == null || food.seconds >= config.minFoodSeconds;
-    const cooldownElapsedMs = now - state.lastRuneAt;
-    const cooldownRemainingMs = Math.max(0, config.runeCooldownMs - cooldownElapsedMs);
-    const cooldownReady = cooldownRemainingMs === 0;
+    const cooldownReady = Date.now() - state.lastRuneAt >= config.runeCooldownMs;
 
-    return {
-      hasStats: true,
-      enoughHp,
-      enoughMana,
-      enoughFood,
-      cooldownReady,
-      cooldownRemainingMs,
-      canMakeRune: enoughHp && enoughMana && enoughFood && cooldownReady,
-    };
+    return enoughHp && enoughMana && enoughFood && cooldownReady;
   }
 
-  function canMakeRune(now = Date.now()) {
-    return getGateStatus(now).canMakeRune;
+  function isSated() {
+    const player = window.gameClient?.player;
+    const conditions = player?.conditions;
+
+    if (conditions?.has && conditions.SATED != null) {
+      return conditions.has(conditions.SATED);
+    }
+
+    const food = readStats().food;
+    if (food?.seconds != null) {
+      return food.seconds > 0;
+    }
+
+    return true;
   }
 
-  function describeGateFailure(gate) {
-    if (!gate.hasStats) return "no player stats yet (player still loading?)";
-    const reasons = [];
-    if (!gate.enoughHp) {
-      const stats = readStats();
-      const hp = stats.hp;
-      const pct = hp?.max > 0 ? Math.round((hp.current / hp.max) * 100) : 0;
-      reasons.push(`HP ${pct}% < ${config.minHpPercent}%`);
-    }
-    if (!gate.enoughMana) {
-      const stats = readStats();
-      const mana = stats.mana;
-      reasons.push(`mana ${mana?.current ?? 0} < ${config.runeManaCost}`);
-    }
-    if (!gate.enoughFood) {
-      const stats = readStats();
-      reasons.push(`food ${stats.food?.text || "?"} < ${config.minFoodSeconds}s`);
-    }
-    if (!gate.cooldownReady) {
-      reasons.push(`cooldown ${Math.round(gate.cooldownRemainingMs)}ms`);
-    }
-    return reasons.length ? reasons.join("; ") : "unknown";
+  function getOpenContainers() {
+    return Array.from(window.gameClient?.player?.__openedContainers || []);
   }
 
-  function findSpellByWords(words) {
-    const target = String(words || "").trim().toLowerCase();
-    if (!target) return null;
-    let spellsMap = null;
-    try {
-      if (typeof Interface !== "undefined" && Interface?.prototype?.SPELLS) {
-        spellsMap = Interface.prototype.SPELLS;
-      }
-    } catch (error) {}
-    if (!spellsMap) return null;
-    if (typeof spellsMap.forEach !== "function") return null;
-    let found = null;
-    spellsMap.forEach((spell, sid) => {
-      if (found) return;
-      if (String(spell?.words || "").trim().toLowerCase() === target) {
-        found = { sid, spell };
-      }
-    });
-    return found;
+  function getItemDefinition(item) {
+    if (!item) return null;
+
+    return (
+      window.gameClient?.itemDefinitionsBySid?.[item.sid] ||
+      window.gameClient?.itemDefinitions?.[item.id] ||
+      null
+    );
   }
 
-  function castViaSpellbook(match) {
-    const spellbook = window.gameClient?.player?.spellbook;
-    if (!spellbook || typeof spellbook.castSpell !== "function") {
-      return { sent: false, reason: "spellbook unavailable" };
-    }
-
-    try {
-      if (spellbook.cooldowns?.has && typeof spellbook.__bucketFor === "function") {
-        const bucket = spellbook.__bucketFor(match.sid);
-        const sidOnCd = spellbook.cooldowns.has(match.sid);
-        const bucketOnCd = spellbook.cooldowns.has(bucket);
-        if (sidOnCd || bucketOnCd) {
-          return { sent: false, reason: `spell-cooldown (sid:${sidOnCd ? "yes" : "no"}, bucket:${bucketOnCd ? "yes" : "no"})` };
-        }
-      }
-    } catch (error) {}
-
-    const manaBefore = Number(window.gameClient?.player?.state?.mana);
-
-    try {
-      spellbook.castSpell(match.sid);
-    } catch (error) {
-      return { sent: false, reason: `castSpell threw: ${error?.message || error}` };
-    }
-
-    const manaAfter = Number(window.gameClient?.player?.state?.mana);
-    const manaSpent = Number.isFinite(manaBefore) && Number.isFinite(manaAfter) ? manaBefore - manaAfter : null;
-
-    return { sent: true, manaBefore, manaAfter, manaSpent };
+  function getItemName(item) {
+    const definition = getItemDefinition(item);
+    return definition?.properties?.name || item?.name || "";
   }
 
-  function castViaDefaultChannel(words) {
-    const channelManager = window.gameClient?.interface?.channelManager;
-    if (!channelManager || typeof channelManager.sendMessageText !== "function") return false;
-    try {
-      channelManager.sendMessageText(words, 0);
-      return true;
-    } catch (error) {
-      bot.log("rune default-channel send threw", { error: error?.message || error });
+  function isFoodItem(item) {
+    const name = getItemName(item).toLowerCase();
+    return /(ham|meat|mushroom|fish|egg|pear|toast|shrimp|food)/i.test(name);
+  }
+
+  function getFoodSlots() {
+    return getOpenContainers().flatMap((container) =>
+      (container?.slots || [])
+        .filter((slot) => slot?.item && slot?.element && isFoodItem(slot.item))
+        .map((slot) => ({
+          container,
+          slot,
+          item: slot.item,
+          name: getItemName(slot.item),
+          count: slot.item.count || 0,
+        }))
+    );
+  }
+
+  function openSlotContextMenu(slot) {
+    if (!slot?.element) return false;
+
+    const rect = slot.element.getBoundingClientRect();
+    slot.element.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 2,
+        buttons: 2,
+        clientX: rect.left + 5,
+        clientY: rect.top + 5,
+      })
+    );
+
+    return true;
+  }
+
+  function clickContainerUse() {
+    const menu = window.gameClient?.interface?.menuManager?.menus?.["container-menu"];
+    const root = menu?.element;
+    if (!root) return false;
+
+    const useEntry = Array.from(root.querySelectorAll("*")).find((element) =>
+      /^use$/i.test((element.textContent || "").trim())
+    );
+
+    if (!useEntry) {
       return false;
     }
+
+    useEntry.click();
+    return true;
+  }
+
+  function eatFromOpenContainers() {
+    const foodSlots = getFoodSlots().sort((a, b) => a.count - b.count);
+    const target = foodSlots[0];
+
+    if (!target) {
+      return false;
+    }
+
+    if (!openSlotContextMenu(target.slot)) {
+      return false;
+    }
+
+    const used = clickContainerUse();
+    if (used) {
+      state.lastFoodAt = Date.now();
+      bot.log("used food from open container", {
+        name: target.name,
+        count: target.count,
+        sid: target.item.sid,
+      });
+    }
+
+    return used;
+  }
+
+  function tryEat() {
+    if (!config.autoEatEnabled) {
+      return false;
+    }
+
+    if (isSated()) {
+      return false;
+    }
+
+    if (Date.now() - state.lastFoodAt < config.eatCooldownMs) {
+      return false;
+    }
+
+    if (eatFromOpenContainers()) {
+      return true;
+    }
+
+    const slotIndex = Math.max(0, Number(config.eatHotbarSlot) - 1);
+    const clicked = bot.clickHotbar(slotIndex);
+
+    if (clicked) {
+      state.lastFoodAt = Date.now();
+      bot.log("clicked food hotbar slot", config.eatHotbarSlot);
+    }
+
+    return clicked;
   }
 
   function tryMakeRune() {
-    const now = Date.now();
-    const gate = getGateStatus(now);
-    if (!gate.canMakeRune) {
-      if (!gate.cooldownReady && gate.enoughHp && gate.enoughMana && gate.enoughFood && gate.hasStats) {
-        return false;
-      }
-      const reason = describeGateFailure(gate);
-      if (reason !== state.lastGateReason || now - state.lastGateLoggedAt > 15000) {
-        state.lastGateReason = reason;
-        state.lastGateLoggedAt = now;
-        bot.log("rune maker waiting:", reason);
-      }
+    if (!canMakeRune()) {
       return false;
     }
 
-    if (state.lastGateReason) {
-      bot.log("rune maker gate cleared, casting", { spell: config.runeSpellWords });
-      state.lastGateReason = null;
+    const sent = bot.sendChat(config.runeSpellWords);
+    if (sent) {
+      state.lastRuneAt = Date.now();
     }
 
-    const match = findSpellByWords(config.runeSpellWords);
-    let castOk = false;
-    let path = "none";
-    let lastSkipReason = null;
-    let castDetail = null;
-
-    if (match) {
-      const result = castViaSpellbook(match);
-      if (result.sent) {
-        castOk = true;
-        path = "spellbook";
-        castDetail = result;
-      } else {
-        lastSkipReason = result.reason;
-        path = "spellbook-blocked";
-      }
-    } else {
-      lastSkipReason = "spell words not in Interface.SPELLS";
-    }
-
-    if (!castOk && lastSkipReason === "spellbook unavailable") {
-      const sent = castViaDefaultChannel(config.runeSpellWords);
-      if (sent) { castOk = true; path = "default-channel"; }
-    }
-
-    if (!castOk && !match) {
-      const sent = castViaDefaultChannel(config.runeSpellWords);
-      if (sent) { castOk = true; path = "default-channel"; }
-      else if (bot.sendChat(config.runeSpellWords)) { castOk = true; path = "active-channel-fallback"; }
-    }
-
-    if (castOk) {
-      state.lastRuneAt = now;
-      state.sentSinceStart += 1;
-      bot.log("rune cast sent", {
-        spell: config.runeSpellWords,
-        spellName: match?.spell?.name || "(custom)",
-        path,
-        manaSpent: castDetail?.manaSpent ?? "?",
-        sentSinceStart: state.sentSinceStart,
-      });
-    } else {
-      const reasonKey = "skip:" + (lastSkipReason || "unknown");
-      if (reasonKey !== state.lastGateReason || now - state.lastGateLoggedAt > 5000) {
-        state.lastGateReason = reasonKey;
-        state.lastGateLoggedAt = now;
-        bot.log("rune cast skipped", {
-          spell: config.runeSpellWords,
-          spellMatched: !!match,
-          spellName: match?.spell?.name || "(unknown)",
-          reason: lastSkipReason,
-        });
-      }
-    }
-
-    return castOk;
+    return sent;
   }
 
   function scheduleNextTick() {
     if (!state.running) return;
 
     state.timerId = window.setTimeout(() => {
-      tick();
+      tickRuneLoop();
     }, config.tickMs);
   }
 
-  function runImmediateTick() {
+  function tickRuneLoop() {
     if (!state.running) return;
 
-    if (state.timerId != null) {
-      window.clearTimeout(state.timerId);
-      state.timerId = null;
-    }
-
-    tick();
+    tryMakeRune();
+    scheduleNextTick();
   }
 
-  function handleResume() {
-    if (document.hidden) {
-      return;
-    }
+  function scheduleNextAutoEatTick() {
+    if (!state.autoEatRunning) return;
 
-    runImmediateTick();
+    state.autoEatTimerId = window.setTimeout(() => {
+      tickAutoEatLoop();
+    }, config.tickMs);
   }
 
-  function attachResumeListeners() {
-    if (resumeListenersAttached) {
-      return;
-    }
+  function tickAutoEatLoop() {
+    if (!state.autoEatRunning) return;
 
-    document.addEventListener("visibilitychange", handleResume);
-    window.addEventListener("focus", handleResume);
-    window.addEventListener("pageshow", handleResume);
-    resumeListenersAttached = true;
-  }
-
-  function detachResumeListeners() {
-    if (!resumeListenersAttached) {
-      return;
-    }
-
-    document.removeEventListener("visibilitychange", handleResume);
-    window.removeEventListener("focus", handleResume);
-    window.removeEventListener("pageshow", handleResume);
-    resumeListenersAttached = false;
-  }
-
-  function tick() {
-    if (!state.running) return;
-
-    try {
-      tryMakeRune();
-    } catch (error) {
-      bot.log("rune tick failed", error?.message || error);
-    } finally {
-      scheduleNextTick();
-    }
+    tryEat();
+    scheduleNextAutoEatTick();
   }
 
   function start(overrides = {}) {
-    Object.assign(config, overrides, { enabled: true });
-    config.tickMs = 250;
+    Object.assign(config, overrides);
     persistConfig();
 
     if (state.running) {
-      bot.log("rune maker already running");
+      bot.log("rune loop already running");
       return false;
     }
 
     state.running = true;
-    state.sentSinceStart = 0;
-    state.lastGateReason = null;
-    state.lastGateLoggedAt = 0;
-    attachResumeListeners();
-    bot.log("rune maker started", { ...config });
-    tick();
+    bot.log("rune loop started", { ...config });
+    tickRuneLoop();
     return true;
   }
 
-  function stop(options = {}) {
-    const shouldPersistEnabled = options.persistEnabled !== false;
+  function stop() {
     state.running = false;
 
     if (state.timerId != null) {
@@ -2194,54 +2118,84 @@ window.__minibiaCopilotBundle.installRuneModule = function installRuneModule(bot
       state.timerId = null;
     }
 
-    detachResumeListeners();
+    bot.log("rune loop stopped");
+    return true;
+  }
 
-    if (shouldPersistEnabled) {
-      config.enabled = false;
-      persistConfig();
+  function startAutoEat(overrides = {}) {
+    Object.assign(config, overrides, { autoEatEnabled: true });
+    persistConfig();
+
+    if (state.autoEatRunning) {
+      bot.log("auto eat already running");
+      return false;
     }
-    bot.log("rune maker stopped");
+
+    state.autoEatRunning = true;
+    bot.log("auto eat started", { eatCooldownMs: config.eatCooldownMs });
+    tickAutoEatLoop();
+    return true;
+  }
+
+  function stopAutoEat() {
+    state.autoEatRunning = false;
+
+    if (state.autoEatTimerId != null) {
+      window.clearTimeout(state.autoEatTimerId);
+      state.autoEatTimerId = null;
+    }
+
+    config.autoEatEnabled = false;
+    persistConfig();
+    bot.log("auto eat stopped");
     return true;
   }
 
   function status() {
     return {
       running: state.running,
+      autoEatRunning: state.autoEatRunning,
       config: { ...config },
       stats: readStats(),
-      gates: getGateStatus(),
       lastRuneAt: state.lastRuneAt,
-      sentSinceStart: state.sentSinceStart,
-      lastGateReason: state.lastGateReason,
+      lastFoodAt: state.lastFoodAt,
+      isSated: isSated(),
     };
   }
 
   function updateConfig(nextConfig = {}) {
     Object.assign(config, nextConfig);
-    config.tickMs = 250;
     persistConfig();
     bot.log("rune config updated", { ...config });
     return { ...config };
   }
 
-  if (config.enabled) {
-    start();
+  if (config.autoEatEnabled) {
+    startAutoEat();
   }
 
   bot.rune = {
     start,
     stop,
+    startAutoEat,
+    stopAutoEat,
     status,
     readStats,
-    getGateStatus,
     canMakeRune,
     tryMakeRune,
+    isSated,
+    tryEat,
+    getOpenContainers,
+    getFoodSlots,
+    eatFromOpenContainers,
     config,
     updateConfig,
   };
 
   bot.startRuneLoop = start;
   bot.stopRuneLoop = stop;
+  bot.startAutoEat = startAutoEat;
+  bot.stopAutoEat = stopAutoEat;
 };
 window.__minibiaCopilotBundle = window.__minibiaCopilotBundle || {};
 
