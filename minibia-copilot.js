@@ -3609,7 +3609,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
 
     // Same conservative pathfind chase as melee — one click toward an
     // adjacent tile, no follow spam, no diagonal micromanagement.
-    const chaseThrottle = Math.max(800, Number(config.chaseThrottleMs) || 1200);
+    const chaseThrottle = Math.max(100, Number(config.chaseThrottleMs) || 300);
     if (now - state.lastChaseAt < chaseThrottle) return true;
 
     const adjacentPosition = findReachableAdjacentPosition(targetPosition, playerPosition);
@@ -3676,7 +3676,7 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     // Throttled, single pathfind to an adjacent walkable tile. No
     // FollowPacket spam, no diagonal micromanagement — looks like a
     // player clicking once to walk to the monster.
-    const chaseThrottle = Math.max(800, Number(config.chaseThrottleMs) || 1200);
+    const chaseThrottle = Math.max(100, Number(config.chaseThrottleMs) || 300);
     if (now - state.lastChaseAt < chaseThrottle) return true;
 
     const adjacentPosition = findReachableAdjacentPosition(targetPosition, playerPosition);
