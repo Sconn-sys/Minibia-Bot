@@ -75,6 +75,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       idleSnapMs: 5000,
       monsterPauseRange: 7,
       combatStallMs: 10000,
+      snapAfterCombat: true,
       enabled: false,
       activePresetName: defaultPresetName,
     },
@@ -1641,6 +1642,23 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       if (state.pausedForCombat) {
         state.pausedForCombat = false;
         state.lastProgressAt = now;
+
+        // After a fight (especially kiting), the player may now be much
+        // closer to a different waypoint than the one they were heading
+        // toward. Snap to whichever is closest so we don't backtrack.
+        if (position && route.length > 1 && config.snapAfterCombat !== false) {
+          const closestIndex = findClosestWaypointIndex(position);
+          if (closestIndex !== state.currentIndex) {
+            bot.log("cave: snapping to closest waypoint after combat", {
+              fromIndex: state.currentIndex + 1,
+              toIndex: closestIndex + 1,
+            });
+            state.currentIndex = closestIndex;
+            state.direction = closestIndex >= route.length - 1 ? -1 : 1;
+            if (route.length <= 1) state.direction = 1;
+            state.lastPathAt = 0;
+          }
+        }
       }
 
       const idleSnapMs = Math.max(2000, Number(config.idleSnapMs) || 10000);

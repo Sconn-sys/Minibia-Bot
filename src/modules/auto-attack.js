@@ -592,7 +592,8 @@ window.__minibiaCopilotBundle.installAutoAttackModule = function installAutoAtta
     const currentDistance = getTileDistance(playerPosition, targetPosition);
     if (currentDistance >= desiredDistance) return false;
 
-    if (now - state.lastChaseAt < 150) return true;
+    const kiteThrottle = Math.max(60, Number(config.kiteThrottleMs) || 100);
+    if (now - state.lastChaseAt < kiteThrottle) return true;
 
     const monsters = getNearbyMonsters();
     const fleeTo = findFleePosition(playerPosition, monsters, desiredDistance);
