@@ -75,6 +75,7 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       idleSnapMs: 5000,
       monsterPauseRange: 7,
       combatStallMs: 10000,
+      walkChunkSize: 10,
       enabled: false,
       activePresetName: defaultPresetName,
     },
@@ -1059,19 +1060,61 @@ window.__minibiaCopilotBundle.installCaveModule = function installCaveModule(bot
       return false;
     }
 
-    const to = new Position(waypoint.x, waypoint.y, waypoint.z);
+    if (from.x === waypoint.x && from.y === waypoint.y && from.z === waypoint.z) {
+      return false;
+    }
+    if (from.z !== waypoint.z) {
+      // Different floor — let the floor-change machinery handle it. Trying
+      // to walk a direction packet to a tile on another z just fails.
+      return false;
+    }
+
+    // Step-walk: compute the A* path ourselves via pathfinder.search and
+    // send the directions through AutoWalkPacket directly. This bypasses
+    // pathfinder.findPath's client-side cancel messages ("Destination is
+    // too far away", "There is no way", "Walking towards destination...")
+    // so the on-screen log doesn't get spammed when the server is the one
+    // that decides whether a step succeeds.
+    const pathfinder = window.gameClient?.world?.pathfinder;
+    if (!pathfinder || typeof pathfinder.search !== "function") return false;
+
+    const world = window.gameClient?.world;
+    const startTile = world?.getTileFromWorldPosition?.(new Position(from.x, from.y, from.z));
+    const endTile = world?.getTileFromWorldPosition?.(new Position(waypoint.x, waypoint.y, waypoint.z));
+    if (!startTile || !endTile) return false;
+
+    let path;
+    try {
+      path = pathfinder.search(startTile, endTile);
+    } catch (error) {
+      bot.log("cave path search failed", { error: error?.message || error });
+      return false;
+    }
+    if (!Array.isArray(path) || path.length === 0) return false;
+
+    const maxSteps = Math.max(1, Math.min(50, Number(config.walkChunkSize) || 10));
+    const stepsToSend = path.slice(0, maxSteps);
+    const directions = new Array(stepsToSend.length);
+    let cursor = startTile;
+    for (let i = 0; i < stepsToSend.length; i += 1) {
+      const dir = cursor.__position?.getLookDirection?.(stepsToSend[i].__position);
+      if (dir == null) return false;
+      directions[i] = dir;
+      cursor = stepsToSend[i];
+    }
 
     try {
-      window.gameClient?.world?.pathfinder?.findPath?.(from, to);
+      window.gameClient.send(new AutoWalkPacket(directions));
       state.lastPathAt = Date.now();
-      bot.log("cave pathing to waypoint", {
-        ...waypoint,
-        index: state.currentIndex + 1,
+      bot.log("cave step-walk", {
+        steps: directions.length,
+        totalPath: path.length,
+        waypointIndex: state.currentIndex + 1,
         total: route.length,
       });
       return true;
     } catch (error) {
-      bot.log("cave pathing failed", { ...waypoint, error: error?.message || error });
+      bot.log("cave AutoWalkPacket failed", { error: error?.message || error });
       return false;
     }
   }
